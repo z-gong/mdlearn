@@ -24,7 +24,8 @@ def main():
     from mstools.utils import create_mol_from_smiles
     from mstools.wrapper.dff import DFF
     # dff = DFF('/home/gongzheng/apps/DFF/Developing')
-    dff = DFF(r'C:\Users\zheng\Projects\DFF\Developing')
+    # dff = DFF(r'C:\Users\zheng\Projects\DFF\Developing')
+    dff = DFF(r'/Users/zgong/Projects/dff/Developing')
     for smiles in smiles_list:
         filename = base64.b64encode(smiles.encode()).decode()
         mol2 = os.path.join(opt.output, '%s.mol2' % filename)

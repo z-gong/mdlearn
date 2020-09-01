@@ -66,10 +66,10 @@ class TorchMLPRegressor():
             loss.backward()
             self.optimizer.step()
 
-        return loss
+        return self.loss(self.regressor(x), y)
 
     def predict(self, x):
-        if type(x) == type(np.array([0])):
+        if type(x) == np.ndarray:
             x = torch.Tensor(x)
         if self.is_gpu:
             v_y = self.regressor(x).data.cpu().numpy()

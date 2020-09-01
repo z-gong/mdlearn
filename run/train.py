@@ -39,8 +39,7 @@ def main():
     parser.add_argument('--check', default=50, type=int, help='Number of epoch that do convergence check')
     parser.add_argument('--minstop', default=0.2, type=float, help='Minimum fraction of step to stop')
     parser.add_argument('--maxconv', default=2, type=int, help='Times of true convergence that makes a stop')
-    parser.add_argument('--featrm', default='', type=str, help='Remove features')
-    parser.add_argument('--optim', default='rms', type=str, help='optimizer')
+    parser.add_argument('--optim', default='adam', type=str, help='optimizer')
     parser.add_argument('--continuation', default=False, type=bool, help='continue training')
     parser.add_argument('--pca', default=-1, type=int, help='dimension to discard')
     parser.add_argument('--sobol', default=-1, type=int, help='dimensions to reduce according to sensitivity analysis')
@@ -73,17 +72,8 @@ def main():
         logger.info('Use non-interactive Agg backend for matplotlib on linux')
         matplotlib.use('Agg')
 
-    if opt.featrm == 'auto':
-        logger.info('Automatically remove features')
-        featrm = [14, 15, 17, 18, 19, 20, 21, 22]
-    elif opt.featrm == '':
-        featrm = []
-    else:
-        featrm = list(map(int, opt.featrm.split(',')))
-    logger.info('Remove Feature: %s' % featrm)
-
     logger.info('Reading data...')
-    datax, datay, data_names = dataloader.load(filename=opt.input, target=opt.target, fps=opt.fp.split(','), featrm=featrm)
+    datax, datay, data_names = dataloader.load(filename=opt.input, target=opt.target, fps=opt.fp.split(','))
 
     # Store fingerprint identifier files
     for fp in opt.fp.split(','):
@@ -116,16 +106,15 @@ def main():
         with open(opt.output + '/sobol_idx.pkl', 'rb') as file:
             sobol_idx = pickle.load(file)
         normed_trainx, normed_validx = sobol_reduce(normed_trainx, normed_validx, len(normed_trainx[0]) - 2 - opt.sobol, sobol_idx)
-        logger.info('sobol SA reduced dimension:%d' % (opt.sobol))
+        logger.info('Sobol reduced dimension: %d' % (opt.sobol))
 
     if opt.pca != -1:
         normed_trainx, normed_validx, _ = pca_nd(normed_trainx, normed_validx, len(normed_trainx[0]) - opt.pca, logger)
-        logger.info('pca reduced dimension:%d' % (opt.pca))
+        logger.info('PCA reduced dimension: %d' % (opt.pca))
 
-    logger.info('final input length:%d' % (len(normed_trainx[0])))
+    logger.info('Final input length: %d' % (len(normed_trainx[0])))
     logger.info('Building network...')
     logger.info('Hidden layers = %r' % layers)
-    logger.info('optimizer = %s' % (opt.optim))
     logger.info('Learning rate = %s' % opt_lr)
     logger.info('Epochs = %s' % opt_epochs)
     logger.info('L2 penalty = %f' % opt.l2)
@@ -133,13 +122,17 @@ def main():
 
     validy_ = validy.copy()  # for further convenience
     trainy_ = trainy.copy()
+
+    normed_trainx = torch.Tensor(normed_trainx)
+    trainy = torch.Tensor(trainy)
+    normed_validx = torch.Tensor(normed_validx)
+
     if opt.gpu:  # store everything to GPU all at once
         logger.info('Using GPU acceleration')
         device = torch.device("cuda:0")
-        normed_trainx = torch.Tensor(normed_trainx).to(device)
-        trainy = torch.Tensor(trainy).to(device)
-        normed_validx = torch.Tensor(normed_validx).to(device)
-        validy = torch.Tensor(validy).to(device)
+        normed_trainx = normed_trainx.to(device)
+        trainy = trainy.to(device)
+        normed_validx = normed_validx.to(device)
 
     if opt.optim == 'sgd':
         optimizer = torch.optim.SGD

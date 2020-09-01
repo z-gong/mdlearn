@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 
-def load(filename, target, fps: [], featrm: [] = None):
+def load(filename, target, fps: []):
     """ Load data from file with different temperature and pressure;
         target: 'density'/'einter'/'compress'/'expansion'/'cp'/'hvap'/'st'/'tc'/'dc'
     """
@@ -34,11 +34,6 @@ def load(filename, target, fps: [], featrm: [] = None):
         datax = ret
     else:
         datax = np.hstack([ret] + [s[:, np.newaxis] for s in other_lists])
-
-    if featrm is not None and len(featrm) > 0:
-        selector = np.ones(datax.shape[1], dtype=bool)
-        selector[featrm] = False
-        datax = datax[:, selector]
 
     names = []
     if 'T' in df.columns and 'P' in df.columns:
