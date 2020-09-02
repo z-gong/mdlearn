@@ -1,27 +1,25 @@
 # mdlearn
-Machine learning of the thermodynamic properties of molecular liquids
+Machine learning of the thermodynamic properties of molecular liquids with graph neural network.
 
 This is the enhanced version of our previously published work  
-`Predicting Thermodynamic Properties of Alkanes by High-throughput Force Field Simulation and Machine Learning`  
-https://doi.org/10.1021/acs.jcim.8b00407
+[Predicting Thermodynamic Properties of Alkanes by High-throughput Force Field Simulation and Machine Learning](https://doi.org/10.1021/acs.jcim.8b00407)
 
-## Python Packages
-* Create ml environment  
-`conda create -n ml`
-
-* Activate ml environment  
+### Required Python packages
+* Create and activate a separate conda environment  
+`conda create -n ml`  
 `source activate ml`
 
-* Add tsinghua pytorch mirror
+* Add tsinghua pytorch mirror (optional)  
 `conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/pytorch/`  
 `conda config --set show_channel_urls yes`
 
 * Install packages  
 `conda install matplotlib scikit-learn pytorch`  
+`conda install -c dglteam dgl-cuda10.1`  
 `conda install -c openbabel openbabel`  
 `conda install -c rdkit rdkit`
 
-## Steps
+### Steps (Feedforward neural network)
 *Following is an example of learning critical temperature of hydrocarbon using two simple fingerprints*
 
 These scripts are located at directory `run`
@@ -49,10 +47,5 @@ source activate ml
 ```
 *Note that if you train the model with **morgan1** or **morgan** fingerprint, you should use **predefinedmorgan1** or **predefinedmorgan** to predict*
 
-## Useful scripts
-These scripts are located at directory `scripts`
-
-* Generate similar structures for those molecules which give depressing results (Currently only support hydrocarbon)
-```
-../scripts/gen-similar.py out/error-0.1.txt
-```
+### Steps (Graph convolutional network)
+*Following is an example of learning critical temperature of hydrocarbon using molecular graph and atom types defined in force field*
