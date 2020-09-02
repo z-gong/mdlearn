@@ -26,6 +26,7 @@ class Msd():
 
             if n > 0 and n <= n_atom:
                 atom = Atom()
+                atom.id = n - 1
                 atom.name = words[1]
                 atom.type = words[3]
                 atom.type_ring = words[3]

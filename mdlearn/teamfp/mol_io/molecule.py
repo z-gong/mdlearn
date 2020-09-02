@@ -2,6 +2,7 @@ from .eqt import eqt_dih_side, eqt_dih_center
 
 class Atom():
     def __init__(self):
+        self.id = -1
         self.name = None
         self.type = None
         self.type_ring = None
@@ -77,7 +78,13 @@ class Dihedral():
 class Molecule():
     def __init__(self, atoms: [Atom]):
         self.atoms: [Atom] = atoms
+        self.bonds: [Bond] = []
         self.dihedrals: [Dihedral] = []
+
+        for atom in atoms:
+            for bond in atom.bonds:
+                if bond not in self.bonds:
+                    self.bonds.append(bond)
 
     def calc_dihedrals(self):
         for atom in self.atoms:
