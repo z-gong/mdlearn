@@ -11,6 +11,7 @@ class GCNModel(nn.Module):
         self.gcn1 = GraphConv(in_feats, hidden_size)
         self.gcn2 = GraphConv(hidden_size, hidden_size)
         self.gcn3 = GraphConv(hidden_size, hidden_size)
+        self.readout = Readout()
         self.linear1 = nn.Linear(hidden_size + extra_feats, 2 * hidden_size)
         self.linear2 = nn.Linear(2 * hidden_size, hidden_size)
         self.linear3 = nn.Linear(hidden_size, 1)
@@ -24,9 +25,9 @@ class GCNModel(nn.Module):
     def forward(self, g, feats_node, feats_graph):
         x = self.activation(self.gcn1(g, feats_node))
         x = self.activation(self.gcn2(g, x))
-        g.ndata['y'] = self.gcn3(g, x)
-        y_mean = dgl.readout_nodes(g, 'y', op='mean')
-        y = torch.cat((y_mean, feats_graph), dim=1)
+        x = self.gcn3(g, x)
+        embedding = self.readout(g, x)
+        y = torch.cat((embedding, feats_graph), dim=1)
         y = self.activation(self.linear1(y))
         y = self.activation(self.linear2(y))
         return self.linear3(y).view(-1)
@@ -38,6 +39,11 @@ class GATModel(nn.Module):
         self.gat1 = GATConv(in_feats, hidden_size, n_head)
         self.gat2 = GATConv(n_head * hidden_size, hidden_size, n_head)
         self.gat3 = GATConv(n_head * hidden_size, hidden_size, n_head)
+
+        # from dgllife.model.readout import *
+        # self.readout = AttentiveFPReadout(n_head * hidden_size)
+        # self.readout = MLPNodeReadout(n_head * hidden_size, n_head * hidden_size, n_head * hidden_size)
+        self.readout = Readout()
 
         self.linear1 = nn.Linear(n_head * hidden_size + extra_feats, 2 * hidden_size)
         self.linear2 = nn.Linear(2 * hidden_size, hidden_size)
@@ -59,9 +65,20 @@ class GATModel(nn.Module):
     def forward(self, g, feats_node, feats_graph):
         x = self.activation(self.gat1(g, feats_node)).view(-1, self.hidden_size * self.n_head)
         x = self.activation(self.gat2(g, x)).view(-1, self.hidden_size * self.n_head)
-        g.ndata['y'] = self.gat3(g, x).view(-1, self.hidden_size * self.n_head)
-        y_mean = dgl.readout_nodes(g, 'y', op='mean')
-        y = torch.cat((y_mean, feats_graph), dim=1)
+        x = self.gat3(g, x).view(-1, self.hidden_size * self.n_head)
+        embedding = self.readout(g, x)
+        y = torch.cat((embedding, feats_graph), dim=1)
         y = self.activation(self.linear1(y))
         y = self.activation(self.linear2(y))
         return self.linear3(y).view(-1)
+
+
+class Readout(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, g, feats_node):
+        with g.local_scope():
+            g.ndata['h'] = feats_node
+            embedding = dgl.readout_nodes(g, 'h', op='mean')
+        return embedding

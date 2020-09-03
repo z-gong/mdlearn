@@ -2,11 +2,12 @@ from .molecule import Atom, Bond, Molecule
 
 
 class Msd():
-    def __init__(self):
+    def __init__(self, msd_file, ignore_H=False):
         self.pbc = []
         self.molecule = None
+        self._parse(msd_file, ignore_H)
 
-    def read(self, msd_file, ignore_H=False):
+    def _parse(self, msd_file, ignore_H):
         atoms = []
 
         with open(msd_file) as f:

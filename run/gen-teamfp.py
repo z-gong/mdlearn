@@ -23,17 +23,10 @@ smiles_list = df.SMILES.unique().tolist()
 if not os.path.exists(opt.output):
     os.mkdir(opt.output)
 
-
-def read_msd(msd_file) -> Molecule:
-    msd = Msd()
-    msd.read(msd_file, ignore_H=True)
-    return msd.molecule
-
-
 if __name__ == '__main__':
     fps = []
     for smiles in smiles_list:
-        mol = read_msd('msdfiles/%s.msd' % base64.b64encode(smiles.encode()).decode())
+        mol = Msd('msdfiles/%s.msd' % base64.b64encode(smiles.encode()).decode(), ignore_H=True).molecule
 
         ### Mark Rings
         rd_mol = Chem.MolFromSmiles(smiles)

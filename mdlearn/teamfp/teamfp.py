@@ -38,7 +38,6 @@ class TeamFP(Fingerprint):
                 fp[idx] += 1
 
         if dihedral:
-            molecule.calc_dihedrals()
             for dih in molecule.dihedrals:
                 idx = 'd.' + dih.type_eqt
                 if idx not in fp:

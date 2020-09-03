@@ -1,3 +1,4 @@
+import argparse
 import logging
 import base64
 import pandas as pd
@@ -12,11 +13,21 @@ import dgl.function as fn
 from dgl.nn.pytorch import GraphConv, GATConv
 import matplotlib.pyplot as plt
 
-from mdlearn.gcn.graph import rdk2dgl, msd2dgl
+from mdlearn.gcn.graph import smi2dgl, msd2dgl, msd2hetero
 from mdlearn.gcn.model import GCNModel, GATModel
 from mdlearn import preprocessing, metrics, visualize
 
-HIDDEN_SIZE = 16
+# parser = argparse.ArgumentParser()
+# parser.add_argument('-i', '--input', type=str, help='Data')
+# parser.add_argument('-f', '--fp', type=str, help='Fingerprints')
+# parser.add_argument('-o', '--output', default='out', type=str, help='Output directory')
+# parser.add_argument('-t', '--target', default='raw_density', type=str, help='Fitting target')
+# parser.add_argument('-p', '--part', default='', type=str, help='Partition cache file')
+# parser.add_argument('-l', '--layer', default='16,16', type=str, help='Size of hidden layers')
+# parser.add_argument('--epoch', default="500,1000,1000", type=str, help='Number of epochs')
+# parser.add_argument('--batch', default=1000, type=int, help='Batch size')
+#
+# opt = parser.parse_args()
 
 
 def load_data(data_file, *fp_files):
@@ -55,13 +66,16 @@ def main():
     selector.load('./out-ch-tvap/part-1.txt')
 
     msd_list = ['msdfiles/%s.msd' % base64.b64encode(smiles.encode()).decode() for smiles in smiles_array]
-    msd_graphs = msd2dgl(msd_list, HIDDEN_SIZE)
+    graph_list, feats_list = msd2dgl(msd_list)
+    # graph_list, feats_list = smi2dgl(smiles_array)
+    # graph_list, feats_list = msd2hetero(msd_list)
 
     def get_graph_tensor(index):
-        graph_list = [msd_graphs[i] for i in np.where(index)[0]]
-        graph_batched = dgl.batch(graph_list)
+        graphs = [graph_list[i] for i in np.where(index)[0]]
+        graph_batched = dgl.batch(graphs)
         y = torch.tensor(y_array[index], dtype=torch.float32)
-        feats_node = graph_batched.ndata['x']
+        feats_node_array = np.concatenate([feats_list[i] for i in np.where(index)[0]])
+        feats_node = torch.tensor(feats_node_array, dtype=torch.float32)
         feats_extra = torch.tensor(fp_array[index], dtype=torch.float32)
 
         device = torch.device('cuda:0')
@@ -81,8 +95,8 @@ def main():
     in_feats_node = feats_node_train.shape[-1]
     in_feats_extra = feats_extra_train.shape[-1]
 
-    # model = GCNModel(in_feats_node, HIDDEN_SIZE, extra_feats=in_feats_extra)
-    model = GATModel(in_feats_node, HIDDEN_SIZE, n_head=3, extra_feats=in_feats_extra)
+    # model = GCNModel(in_feats_node, 16, extra_feats=in_feats_extra)
+    model = GATModel(in_feats_node, 16, n_head=3, extra_feats=in_feats_extra)
     model.cuda()
     print(model)
     for name, param in model.named_parameters():

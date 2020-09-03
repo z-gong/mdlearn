@@ -1,4 +1,6 @@
+import itertools
 from .eqt import eqt_dih_side, eqt_dih_center
+
 
 class Atom():
     def __init__(self):
@@ -53,6 +55,16 @@ class Bond():
         return '<Bond: %s %s>' % (self.atom1.name, self.atom2.name)
 
 
+class Angle():
+    def __init__(self, atom1: Atom, atom2: Atom, atom3: Atom):
+        self.atom1 = atom1
+        self.atom2 = atom2
+        self.atom3 = atom3
+
+    def __repr__(self):
+        return '<Angle: %s %s %s>' % (self.atom1.name, self.atom2.name, self.atom3.name)
+
+
 class Dihedral():
     def __init__(self, atom1: Atom, atom2: Atom, atom3: Atom, atom4: Atom):
         self.atom1 = atom1
@@ -69,7 +81,8 @@ class Dihedral():
 
     @property
     def type_eqt(self):
-        return '%s,%s,%s,%s' % (self.atom1.type_dih_side, self.atom2.type_dih_center, self.atom3.type_dih_center, self.atom4.type_dih_side)
+        return '%s,%s,%s,%s' % (
+            self.atom1.type_dih_side, self.atom2.type_dih_center, self.atom3.type_dih_center, self.atom4.type_dih_side)
 
     def __eq__(self, other):
         return self.atom1 == other.atom4 and self.atom2 == other.atom3
@@ -79,25 +92,23 @@ class Molecule():
     def __init__(self, atoms: [Atom]):
         self.atoms: [Atom] = atoms
         self.bonds: [Bond] = []
+        self.angles: [Angle] = []
         self.dihedrals: [Dihedral] = []
 
         for atom in atoms:
             for bond in atom.bonds:
                 if bond not in self.bonds:
                     self.bonds.append(bond)
+            for (a1, a2) in itertools.combinations(atom.neighbours, 2):
+                self.angles.append(Angle(a1, atom, a2))
 
-    def calc_dihedrals(self):
-        for atom in self.atoms:
-            for neigh in atom.neighbours:
-                for neigh2 in neigh.neighbours:
-                    if neigh2 == atom:
+        for bond in self.bonds:
+            atom1, atom2 = bond.atom1, bond.atom2
+            for neigh1 in atom1.neighbours:
+                for neigh2 in atom2.neighbours:
+                    if neigh1 == atom2 or neigh2 == atom1 or neigh1 == neigh2:
                         continue
-                    for neigh3 in neigh2.neighbours:
-                        if neigh3 == atom or neigh3 == neigh:
-                            continue
-                        dihedral = Dihedral(atom, neigh, neigh2, neigh3)
-                        if dihedral not in self.dihedrals:
-                            self.dihedrals.append(dihedral)
+                    self.dihedrals.append(Dihedral(neigh1, atom1, atom2, neigh2))
 
     def canonicalize(self):
         pass
