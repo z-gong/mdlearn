@@ -1,99 +1,123 @@
+import os
 import argparse
 import logging
 import base64
 import pandas as pd
-from rdkit.Chem import AllChem as Chem
 import numpy as np
+import sklearn as sk
 import torch
-import pickle
-import torch.nn as nn
 import torch.nn.functional as F
 import dgl
-import dgl.function as fn
-from dgl.nn.pytorch import GraphConv, GATConv
 import matplotlib.pyplot as plt
 
 from mdlearn.gcn.graph import smi2dgl, msd2dgl, msd2hetero
 from mdlearn.gcn.model import GCNModel, GATModel
-from mdlearn import preprocessing, metrics, visualize
+from mdlearn import preprocessing, metrics, visualize, dataloader
 
-# parser = argparse.ArgumentParser()
-# parser.add_argument('-i', '--input', type=str, help='Data')
-# parser.add_argument('-f', '--fp', type=str, help='Fingerprints')
-# parser.add_argument('-o', '--output', default='out', type=str, help='Output directory')
-# parser.add_argument('-t', '--target', default='raw_density', type=str, help='Fitting target')
-# parser.add_argument('-p', '--part', default='', type=str, help='Partition cache file')
+parser = argparse.ArgumentParser()
+parser.add_argument('-i', '--input', type=str, help='Data')
+parser.add_argument('-f', '--fp', type=str, help='Fingerprints')
+parser.add_argument('-o', '--output', default='out', type=str, help='Output directory')
+parser.add_argument('-t', '--target', default='raw_density', type=str, help='Fitting target')
+parser.add_argument('-p', '--part', default='', type=str, help='Partition cache file')
+parser.add_argument('-g', '--graph', default='rdk', type=str, choices=['msd', 'rdk'], help='Graph type')
 # parser.add_argument('-l', '--layer', default='16,16', type=str, help='Size of hidden layers')
-# parser.add_argument('--epoch', default="500,1000,1000", type=str, help='Number of epochs')
-# parser.add_argument('--batch', default=1000, type=int, help='Batch size')
-#
-# opt = parser.parse_args()
+parser.add_argument('--epoch', default=1600, type=int, help='Number of epochs')
+parser.add_argument('--lr', default=0.01, type=float, help='Initial learning rate')
+parser.add_argument('--lrsteps', default=400, type=int, help='Scale learning rate every these steps')
+parser.add_argument('--lrgamma', default=0.2, type=float, help='Scaling factor for learning rate')
+parser.add_argument('--batch', default=1000, type=int, help='Batch size')
 
+opt = parser.parse_args()
 
-def load_data(data_file, *fp_files):
-    smiles_list = []
-    y_list = []
-    df = pd.read_csv(data_file, sep='\s+')
-    for row in df.itertuples():
-        smiles_list.append(row.SMILES)
-        y_list.append(row.tvap)
+if not os.path.exists(opt.output):
+    os.makedirs(opt.output)
 
-    fp_dict = {}
-    for file in fp_files:
-        d = pd.read_csv(file, sep='\s+', header=None, names=['SMILES', 'fp'], dtype=str)
-        for row in d.itertuples():
-            if row.SMILES not in fp_dict:
-                fp_dict[row.SMILES] = list(map(float, row.fp.split(',')))
-            else:
-                fp_dict[row.SMILES] += list(map(float, row.fp.split(',')))
-    fp_list = [fp_dict[smiles] for smiles in df.SMILES]
-    fp_array = np.array(fp_list, dtype=np.float32)
-    scaler = preprocessing.Scaler()
-    scaler.fit(fp_array)
-    fp_array = scaler.transform(fp_array)
-
-    return np.array(smiles_list), np.array(y_list), fp_array
+logger = logging.getLogger('mdlearn')
+logger.setLevel(logging.INFO)
+formatter = logging.Formatter(fmt='[%(asctime)s] (%(levelname)s) %(message)s', datefmt='%Y-%d-%m %H:%M:%S')
+clog = logging.StreamHandler()
+clog.setFormatter(formatter)
+flog = logging.FileHandler(opt.output + '/log.txt', mode='w')
+flog.setFormatter(formatter)
+logger.addHandler(clog)
+logger.addHandler(flog)
 
 
 def main():
-    smiles_array, y_array, fp_array = load_data('../data/nist-CH-tvap.txt', './out-ch-tvap/fp_simple')
+    logger.info('Reading data and extra features...')
+    fp_array, y_array, names_array = dataloader.load(opt.input, opt.target, opt.fp.split(','))
+    smiles_array = np.array([name.split()[0] for name in names_array])
     # only take the n_heavy, shortest and n_rotatable from fp_simple
     # fp_array = fp_array[:, (0, 2, 3,)]
     fp_array = fp_array[:, (0,)]
 
-    selector = preprocessing.Selector(smiles_array)
-    # selector.partition(0.8, 0.2)
-    selector.load('./out-ch-tvap/part-1.txt')
+    logger.info('Normalizing extra features...')
+    scaler = preprocessing.Scaler()
+    scaler.fit(fp_array)
+    fp_array = scaler.transform(fp_array)
 
-    msd_list = ['msdfiles/%s.msd' % base64.b64encode(smiles.encode()).decode() for smiles in smiles_array]
-    graph_list, feats_list = msd2dgl(msd_list)
-    # graph_list, feats_list = smi2dgl(smiles_array)
+    logger.info('Generating molecular graphs with %s...' % opt.graph)
+    if opt.graph == 'msd':
+        msd_list = ['msdfiles/%s.msd' % base64.b64encode(smiles.encode()).decode() for smiles in smiles_array]
+        graph_list, feats_list = msd2dgl(msd_list)
+    elif opt.graph == 'rdk':
+        graph_list, feats_list = smi2dgl(smiles_array)
     # graph_list, feats_list = msd2hetero(msd_list)
 
-    def get_graph_tensor(index):
+    logger.info('Selecting data...')
+    selector = preprocessing.Selector(smiles_array)
+    if opt.part is not None:
+        logger.info('Loading partition file %s' % opt.part)
+        selector.load(opt.part)
+    else:
+        logger.warning("Partition file not found. Using auto-partition instead.")
+        selector.partition(0.8, 0.2)
+
+    def get_batched_graph_tensor(index, batch_size=None):
         graphs = [graph_list[i] for i in np.where(index)[0]]
-        graph_batched = dgl.batch(graphs)
-        y = torch.tensor(y_array[index], dtype=torch.float32)
-        feats_node_array = np.concatenate([feats_list[i] for i in np.where(index)[0]])
-        feats_node = torch.tensor(feats_node_array, dtype=torch.float32)
-        feats_extra = torch.tensor(fp_array[index], dtype=torch.float32)
+        y = y_array[index]
+        feats_node = [feats_list[i] for i in np.where(index)[0]]
+        fp_extra = fp_array[index]
 
+        n_sample = len(graphs)
+        if batch_size is None:
+            batch_size = n_sample
+        batch_size = min(batch_size, n_sample)
+        n_batch = n_sample // batch_size
+        if n_batch > 1:
+            graphs, y, feats_node, fp_extra = sk.utils.shuffle(graphs, y, feats_node, fp_extra)
+
+        bg_batch = []
+        y_batch = []
+        feats_node_batch = []
+        feats_extra_batch = []
         device = torch.device('cuda:0')
-        graph_batched = graph_batched.to(device)
-        y = y.to(device)
-        feats_node = feats_node.to(device)
-        feats_extra = feats_extra.to(device)
+        for i in range(n_batch):
+            begin = batch_size * i
+            end = batch_size * (i + 1) if i != n_batch else -1
+            bg_batch.append(dgl.batch(graphs[begin: end]).to(device))
+            y_batch.append(torch.tensor(y[begin:end], dtype=torch.float32, device=device))
+            feats_node_batch.append(
+                torch.tensor(np.concatenate(feats_node[begin:end]), dtype=torch.float32, device=device))
+            feats_extra_batch.append(torch.tensor(fp_extra[begin:end], dtype=torch.float32, device=device))
 
-        return graph_batched, y, feats_node, feats_extra
+        return bg_batch, y_batch, feats_node_batch, feats_extra_batch
 
-    graph_train, y_train, feats_node_train, feats_extra_train = get_graph_tensor(selector.training_index)
-    graph_valid, y_valid, feats_node_valid, feats_extra_valid = get_graph_tensor(selector.validation_index)
+    bg_batch_train, y_batch_train, feats_node_batch_train, feats_extra_batch_train = \
+        get_batched_graph_tensor(selector.training_index, opt.batch)
+    bg_train, y_train, feats_node_train, feats_extra_train = get_batched_graph_tensor(selector.training_index)
+    bg_valid, y_valid, feats_node_valid, feats_extra_valid = get_batched_graph_tensor(selector.validation_index)
 
-    y_train_array = y_train.detach().cpu().numpy()
-    y_valid_array = y_valid.detach().cpu().numpy()
+    y_train_array = y_array[selector.training_index]
+    y_valid_array = y_array[selector.validation_index]
 
-    in_feats_node = feats_node_train.shape[-1]
-    in_feats_extra = feats_extra_train.shape[-1]
+    logger.info('Training size = %d, Validation size = %d' % (len(y_train_array), len(y_valid_array)))
+
+    in_feats_node = feats_node_train[0].shape[-1]
+    in_feats_extra = feats_extra_train[0].shape[-1]
+
+    logger.info('Batch size = %d' % opt.batch)
 
     # model = GCNModel(in_feats_node, 16, extra_feats=in_feats_extra)
     model = GATModel(in_feats_node, 16, n_head=3, extra_feats=in_feats_extra)
@@ -102,52 +126,49 @@ def main():
     for name, param in model.named_parameters():
         print(name, param.data.shape)
 
-    logger = logging.getLogger('mdlearn')
-    logger.setLevel(logging.INFO)
-    formatter = logging.Formatter(fmt='[%(asctime)s] (%(levelname)s) %(message)s', datefmt='%Y-%d-%m %H:%M:%S')
-    clog = logging.StreamHandler()
-    clog.setFormatter(formatter)
-    logger.addHandler(clog)
-
     header = 'Step Loss MeaSquE MeaSigE MeaUnsE MaxRelE Acc2% Acc5% Acc10%'.split()
     logger.info('%-8s %8s %8s %8s %8s %8s %8s %8s %8s' % tuple(header))
+    # hack for weighted MSELoss
+    # y_train_zeros = y_train * 0
+    # weight = torch.exp(torch.abs(y_train - 450) / 200)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.2)
-    for epoch in range(2500):
+    optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=opt.lrsteps, gamma=opt.lrgamma)
+    for epoch in range(opt.epoch):
         model.train()
-        value = model(graph_train, feats_node_train, feats_extra_train)
-        loss = F.mse_loss(value, y_train)
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        for i_batch in range(len(bg_batch_train)):
+            optimizer.zero_grad()
+            value = model(bg_batch_train[i_batch], feats_node_batch_train[i_batch], feats_extra_batch_train[i_batch])
+            loss = F.mse_loss(value, y_batch_train[i_batch])
+            loss.backward()
+            optimizer.step()
         scheduler.step()
 
         if (epoch + 1) % 100 == 0:
             model.eval()
-            predict = model(graph_valid, feats_node_valid, feats_extra_valid).detach().cpu().numpy()
-            mse = metrics.mean_squared_error(y_valid_array, predict)
+            predict_train = model(bg_train[0], feats_node_train[0], feats_extra_train[0]).detach().cpu().numpy()
+            predict_valid = model(bg_valid[0], feats_node_valid[0], feats_extra_valid[0]).detach().cpu().numpy()
+            mse_train = metrics.mean_squared_error(y_train_array, predict_train)
+            mse_valid = metrics.mean_squared_error(y_valid_array, predict_valid)
             err_line = '%-8i %8.2e %8.2e %8.1f %8.1f %8.1f %8.1f %8.1f %8.1f' % (
-                epoch + 1, loss.detach().cpu().numpy(), mse,
-                metrics.mean_signed_error(y_valid_array, predict) * 100,
-                metrics.mean_unsigned_error(y_valid_array, predict) * 100,
-                metrics.max_relative_error(y_valid_array, predict) * 100,
-                metrics.accuracy(y_valid_array, predict, 0.02) * 100,
-                metrics.accuracy(y_valid_array, predict, 0.05) * 100,
-                metrics.accuracy(y_valid_array, predict, 0.10) * 100)
+                epoch + 1, mse_train, mse_valid,
+                metrics.mean_signed_error(y_valid_array, predict_valid) * 100,
+                metrics.mean_unsigned_error(y_valid_array, predict_valid) * 100,
+                metrics.max_relative_error(y_valid_array, predict_valid) * 100,
+                metrics.accuracy(y_valid_array, predict_valid, 0.02) * 100,
+                metrics.accuracy(y_valid_array, predict_valid, 0.05) * 100,
+                metrics.accuracy(y_valid_array, predict_valid, 0.10) * 100)
 
             logger.info(err_line)
 
-    predict_train = model(graph_train, feats_node_train, feats_extra_train).detach().cpu().numpy()
-    predict_valid = model(graph_valid, feats_node_valid, feats_extra_valid).detach().cpu().numpy()
     visualizer = visualize.LinearVisualizer(y_train_array, predict_train, smiles_array[selector.training_index],
                                             'training')
     visualizer.append(y_valid_array, predict_valid, smiles_array[selector.validation_index], 'validation')
 
-    visualizer.scatter_yy(savefig='error-train.png', annotate_threshold=0.1, marker='x', lw=0.2, s=5)
-    visualizer.hist_error(savefig='error-hist.png', label='validation', histtype='step', bins=50)
-    visualizer.dump('fit.txt')
-    visualizer.dump_bad_molecules('error-0.10.txt', 'validation', threshold=0.1)
+    visualizer.scatter_yy(savefig=opt.output + '/error-train.png', annotate_threshold=0.1, marker='x', lw=0.2, s=5)
+    visualizer.hist_error(savefig=opt.output + '/error-hist.png', label='validation', histtype='step', bins=50)
+    visualizer.dump(opt.output + '/fit.txt')
+    visualizer.dump_bad_molecules(opt.output + '/error-0.10.txt', 'validation', threshold=0.1)
     plt.show()
 
 

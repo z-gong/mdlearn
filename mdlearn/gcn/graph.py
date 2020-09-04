@@ -2,7 +2,7 @@ import torch
 import dgl
 import numpy as np
 from rdkit.Chem import AllChem as Chem
-from ..teamfp.mol_io import Msd
+from ..msd import Msd
 
 
 def msd2dgl(msd_files):

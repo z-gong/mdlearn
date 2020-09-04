@@ -1,5 +1,4 @@
 import itertools
-from .eqt import eqt_dih_side, eqt_dih_center
 
 
 class Atom():
@@ -7,7 +6,6 @@ class Atom():
         self.id = -1
         self.name = None
         self.type = None
-        self.type_ring = None
         self.element = None
         self.charge = None
 
@@ -29,14 +27,6 @@ class Atom():
     @property
     def n_neigh_heavy(self):
         return len([a for a in self.neighbours if not a.is_H])
-
-    @property
-    def type_dih_side(self):
-        return eqt_dih_side.get(self.type, self.type)
-
-    @property
-    def type_dih_center(self):
-        return eqt_dih_center.get(self.type, self.type)
 
     def __repr__(self):
         return '<Atom: %s %s>' % (self.name, self.type)
@@ -79,15 +69,6 @@ class Dihedral():
     def type(self):
         return '%s,%s,%s,%s' % (self.atom1.type, self.atom2.type, self.atom3.type, self.atom4.type)
 
-    @property
-    def type_eqt(self):
-        return '%s,%s,%s,%s' % (
-            self.atom1.type_dih_side, self.atom2.type_dih_center, self.atom3.type_dih_center, self.atom4.type_dih_side)
-
-    def __eq__(self, other):
-        return self.atom1 == other.atom4 and self.atom2 == other.atom3
-
-
 class Molecule():
     def __init__(self, atoms: [Atom]):
         self.atoms: [Atom] = atoms
@@ -110,5 +91,3 @@ class Molecule():
                         continue
                     self.dihedrals.append(Dihedral(neigh1, atom1, atom2, neigh2))
 
-    def canonicalize(self):
-        pass
