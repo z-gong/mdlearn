@@ -18,8 +18,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument('-i', '--input', type=str, help='Data')
 parser.add_argument('-f', '--fp', type=str, help='Fingerprints')
 parser.add_argument('-o', '--output', default='out', type=str, help='Output directory')
-parser.add_argument('-t', '--target', default='raw_density', type=str, help='Fitting target')
-parser.add_argument('-p', '--part', default='', type=str, help='Partition cache file')
+parser.add_argument('-t', '--target', default='density', type=str, help='Fitting target')
+parser.add_argument('-p', '--part', type=str, help='Partition cache file')
 parser.add_argument('-g', '--graph', default='rdk', type=str, choices=['msd', 'rdk'], help='Graph type')
 # parser.add_argument('-l', '--layer', default='16,16', type=str, help='Size of hidden layers')
 parser.add_argument('--epoch', default=1600, type=int, help='Number of epochs')
@@ -50,7 +50,7 @@ def main():
     smiles_array = np.array([name.split()[0] for name in names_array])
     # only take the n_heavy, shortest and n_rotatable from fp_simple
     # fp_array = fp_array[:, (0, 2, 3,)]
-    fp_array = fp_array[:, (0,)]
+    # fp_array = fp_array[:, (0,)]
 
     logger.info('Normalizing extra features...')
     scaler = preprocessing.Scaler()
@@ -71,7 +71,7 @@ def main():
         logger.info('Loading partition file %s' % opt.part)
         selector.load(opt.part)
     else:
-        logger.warning("Partition file not found. Using auto-partition instead.")
+        logger.warning('Partition file not provided. Using auto-partition instead')
         selector.partition(0.8, 0.2)
 
     def get_batched_graph_tensor(index, batch_size=None):

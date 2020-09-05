@@ -11,9 +11,9 @@ def load(filename, target, fps: []):
 
     other_lists = []
     if 'T' in df.columns:
-        other_lists.append(df['T'])
+        other_lists.append(df['T'].values)
     if 'P' in df.columns:
-        other_lists.append(df['P'])
+        other_lists.append(df['P'].values)
 
     fp_dict = {}
     for fp_file in fps:
@@ -26,7 +26,7 @@ def load(filename, target, fps: []):
 
     fp_list = []
     for smiles in df['SMILES']:
-        fp_list.append(np.array(fp_dict[smiles]))
+        fp_list.append(fp_dict[smiles])
 
     ret = np.vstack(fp_list)
 
