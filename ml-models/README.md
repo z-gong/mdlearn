@@ -13,5 +13,4 @@
 * `hvap-lg` is simulated heat of vaporization
 
 ### Special case
-`CH-hvap-lg` is heat of vaporization of **alkanes** instead of all hydrocarbons
-
+* `wyz` contains the results for alkanes reported in JCIM 2018.

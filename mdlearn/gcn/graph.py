@@ -5,6 +5,24 @@ from rdkit.Chem import AllChem as Chem
 from ..msd import Msd
 
 
+def _read_msd_files(msd_files):
+    types = set()
+    mol_list = []
+    mol_dict = {}  # cache molecules read from MSD files
+    for file in msd_files:
+        if file in mol_dict:
+            mol = mol_dict[file]
+        else:
+            mol = Msd(file).molecule
+            for atom in mol.atoms:
+                types.add(atom.type)
+            mol_dict[file] = mol
+        mol_list.append(mol)
+    types = list(sorted(types))
+
+    return mol_list, types
+
+
 def msd2dgl(msd_files):
     '''
     Convert a list of MSD files to a list of DGLGraph and node features.
@@ -21,14 +39,7 @@ def msd2dgl(msd_files):
     feats_list : list of np.ndarray of shape (n_atom, n_feat)
 
     '''
-    types = set()
-    mol_list = []
-    for file in msd_files:
-        mol = Msd(file).molecule
-        mol_list.append(mol)
-        for atom in mol.atoms:
-            types.add(atom.type)
-    types = list(sorted(types))
+    mol_list, types = _read_msd_files(msd_files)
 
     graph_list = []
     feats_list = []
@@ -66,14 +77,7 @@ def msd2hetero(msd_files):
     feats_list : list of np.ndarray of shape (n_atom, n_feat)
 
     '''
-    types = set()
-    mol_list = []
-    for file in msd_files:
-        mol = Msd(file).molecule
-        mol_list.append(mol)
-        for atom in mol.atoms:
-            types.add(atom.type)
-    types = list(sorted(types))
+    mol_list, types = _read_msd_files(msd_files)
 
     graph_list = []
     feats_list = []
@@ -122,20 +126,21 @@ def smi2dgl(smiles_list):
 
     '''
 
+    rdkm_dict = {}  # cache RDKit molecules generated from SMILES
+    for smiles in smiles_list:
+        if smiles not in rdkm_dict:
+            rdkm = Chem.MolFromSmiles(smiles)
+            rdkm = Chem.AddHs(rdkm)
+            rdkm_dict[smiles] = rdkm
+
     graph_list = []
     feats_list = []
     for smiles in smiles_list:
-        rdkm = Chem.MolFromSmiles(smiles)
-        rdkm = Chem.AddHs(rdkm)
-
-        bonds = []
-        for bond in rdkm.GetBonds():
-            id1, id2 = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
-            bonds.append((id1, id2))
-            bonds.append((id2, id1))
+        rdkm = rdkm_dict[smiles]
+        bonds = [(bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()) for bond in rdkm.GetBonds()]
         edges = list(zip(*bonds))
-        u = torch.tensor(edges[0])
-        v = torch.tensor(edges[1])
+        u = torch.tensor(edges[0] + edges[1])  # bidirectional
+        v = torch.tensor(edges[1] + edges[0])
 
         graph = dgl.graph((u, v))
         graph = dgl.add_self_loop(graph)
@@ -144,16 +149,17 @@ def smi2dgl(smiles_list):
         feats = np.zeros((graph.num_nodes(), 6))
         for atom in rdkm.GetAtoms():
             if atom.GetAtomicNum() == 1:
-                continue
-            idx = 1
-            if atom.GetIsAromatic():
-                idx = 2
+                idx = 0
             else:
-                n_neigh = len(atom.GetNeighbors())
-                if n_neigh == 3:
-                    idx = 3
-                if n_neigh == 2:
-                    idx = 4
+                idx = 1
+                if atom.GetIsAromatic():
+                    idx = 2
+                else:
+                    n_neigh = len(atom.GetNeighbors())
+                    if n_neigh == 3:
+                        idx = 3
+                    if n_neigh == 2:
+                        idx = 4
             feats[atom.GetIdx()][idx] = 1
             if atom.IsInRing():
                 feats[atom.GetIdx()][-1] = 1

@@ -50,7 +50,8 @@ def main():
     smiles_array = np.array([name.split()[0] for name in names_array])
     # only take the n_heavy, shortest and n_rotatable from fp_simple
     # fp_array = fp_array[:, (0, 2, 3,)]
-    # fp_array = fp_array[:, (0,)]
+    # only take the n_heavy from fp_simple and T, P
+    fp_array = fp_array[:, (0, -2, -1)]
 
     logger.info('Normalizing extra features...')
     scaler = preprocessing.Scaler()
@@ -146,29 +147,28 @@ def main():
 
         if (epoch + 1) % 100 == 0:
             model.eval()
-            predict_train = model(bg_train[0], feats_node_train[0], feats_extra_train[0]).detach().cpu().numpy()
-            predict_valid = model(bg_valid[0], feats_node_valid[0], feats_extra_valid[0]).detach().cpu().numpy()
-            mse_train = metrics.mean_squared_error(y_train_array, predict_train)
-            mse_valid = metrics.mean_squared_error(y_valid_array, predict_valid)
+            pred_train = model(bg_train[0], feats_node_train[0], feats_extra_train[0]).detach().cpu().numpy()
+            pred_valid = model(bg_valid[0], feats_node_valid[0], feats_extra_valid[0]).detach().cpu().numpy()
+            mse_train = metrics.mean_squared_error(y_train_array, pred_train)
+            mse_valid = metrics.mean_squared_error(y_valid_array, pred_valid)
             err_line = '%-8i %8.2e %8.2e %8.1f %8.1f %8.1f %8.1f %8.1f %8.1f' % (
                 epoch + 1, mse_train, mse_valid,
-                metrics.mean_signed_error(y_valid_array, predict_valid) * 100,
-                metrics.mean_unsigned_error(y_valid_array, predict_valid) * 100,
-                metrics.max_relative_error(y_valid_array, predict_valid) * 100,
-                metrics.accuracy(y_valid_array, predict_valid, 0.02) * 100,
-                metrics.accuracy(y_valid_array, predict_valid, 0.05) * 100,
-                metrics.accuracy(y_valid_array, predict_valid, 0.10) * 100)
+                metrics.mean_signed_error(y_valid_array, pred_valid) * 100,
+                metrics.mean_unsigned_error(y_valid_array, pred_valid) * 100,
+                metrics.max_relative_error(y_valid_array, pred_valid) * 100,
+                metrics.accuracy(y_valid_array, pred_valid, 0.02) * 100,
+                metrics.accuracy(y_valid_array, pred_valid, 0.05) * 100,
+                metrics.accuracy(y_valid_array, pred_valid, 0.10) * 100)
 
             logger.info(err_line)
+    torch.save(model, opt.output + '/model.pt')
 
-    visualizer = visualize.LinearVisualizer(y_train_array, predict_train, smiles_array[selector.training_index],
-                                            'training')
-    visualizer.append(y_valid_array, predict_valid, smiles_array[selector.validation_index], 'validation')
-
+    visualizer = visualize.LinearVisualizer(y_train_array, pred_train, names_array[selector.training_index], 'train')
+    visualizer.append(y_valid_array, pred_valid, names_array[selector.validation_index], 'valid')
     visualizer.scatter_yy(savefig=opt.output + '/error-train.png', annotate_threshold=0.1, marker='x', lw=0.2, s=5)
-    visualizer.hist_error(savefig=opt.output + '/error-hist.png', label='validation', histtype='step', bins=50)
+    visualizer.hist_error(savefig=opt.output + '/error-hist.png', label='valid', histtype='step', bins=50)
     visualizer.dump(opt.output + '/fit.txt')
-    visualizer.dump_bad_molecules(opt.output + '/error-0.10.txt', 'validation', threshold=0.1)
+    visualizer.dump_bad_molecules(opt.output + '/error-0.10.txt', 'valid', threshold=0.1)
     plt.show()
 
 
