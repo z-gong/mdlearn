@@ -37,12 +37,12 @@ class GATModel(nn.Module):
         super().__init__()
         self.gat1 = dglnn.GATConv(in_feats, hidden_size, n_head)
         self.gat2 = dglnn.GATConv(n_head * hidden_size, hidden_size, n_head)
-        self.gat3 = dglnn.GATConv(n_head * hidden_size, hidden_size, n_head)
+        self.gat3 = dglnn.GATConv(n_head * hidden_size, hidden_size, 1)
 
         # self.readout = dglnn.AvgPooling()
-        self.readout = WeightedAverage(n_head * hidden_size)
+        self.readout = WeightedAverage(hidden_size)
 
-        self.linear1 = nn.Linear(n_head * hidden_size + extra_feats, 2 * hidden_size)
+        self.linear1 = nn.Linear(hidden_size + extra_feats, 2 * hidden_size)
         self.linear2 = nn.Linear(2 * hidden_size, hidden_size)
         self.linear3 = nn.Linear(hidden_size, 1)
 
@@ -62,7 +62,7 @@ class GATModel(nn.Module):
     def forward(self, g, feats_node, feats_graph, target=None, weight=None):
         x = self.activation(self.gat1(g, feats_node)).view(-1, self.hidden_size * self.n_head)
         x = self.activation(self.gat2(g, x)).view(-1, self.hidden_size * self.n_head)
-        x = self.activation(self.gat3(g, x)).view(-1, self.hidden_size * self.n_head)
+        x = self.activation(self.gat3(g, x)).view(-1, self.hidden_size)
         embedding = self.readout(g, x)
         y = torch.cat((embedding, feats_graph), dim=1)
         y = self.activation(self.linear1(y))

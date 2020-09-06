@@ -174,21 +174,22 @@ def main():
         model.reset_optimizer({'optimizer': optimizer, 'lr': opt_lr[k], 'weight_decay': opt.l2})
         for i in range(each_epoch):
             total_epoch += 1
-            loss = model.fit_epoch(normed_trainx, trainy)
+            model.fit_epoch(normed_trainx, trainy)
             if total_epoch % opt.check == 0:
-                predy = model.predict_batch(normed_validx)
-                mse = metrics.mean_squared_error(validy_, predy)
+                pred_train = model.predict_batch(normed_trainx)
+                pred_valid = model.predict_batch(normed_validx)
+                mse = metrics.mean_squared_error(validy_, pred_valid)
                 mse_history.append(mse)
                 err_line = '%-8i %8.2e %8.2e %8.1f %8.1f %8.1f %8.1f %8.1f %8.1f' % (
                     total_epoch,
-                    loss.data.cpu().numpy() if model.is_gpu else loss.data.numpy(),
+                    metrics.mean_squared_error(trainy_, pred_train),
                     mse,
-                    metrics.mean_signed_error(validy_, predy) * 100,
-                    metrics.mean_unsigned_error(validy_, predy) * 100,
-                    metrics.max_relative_error(validy_, predy) * 100,
-                    metrics.accuracy(validy_, predy, 0.02) * 100,
-                    metrics.accuracy(validy_, predy, 0.05) * 100,
-                    metrics.accuracy(validy_, predy, 0.10) * 100)
+                    metrics.mean_signed_error(validy_, pred_valid) * 100,
+                    metrics.mean_unsigned_error(validy_, pred_valid) * 100,
+                    metrics.max_relative_error(validy_, pred_valid) * 100,
+                    metrics.accuracy(validy_, pred_valid, 0.02) * 100,
+                    metrics.accuracy(validy_, pred_valid, 0.05) * 100,
+                    metrics.accuracy(validy_, pred_valid, 0.10) * 100)
 
                 logger.info(err_line)
 
@@ -216,18 +217,17 @@ def main():
     if not model_saved:
         model.save(opt.output + '/model.pt')
 
-    visualizer = visualize.LinearVisualizer(trainy_.reshape(-1), model.predict_batch(normed_trainx).reshape(-1), trainname, 'training')
-    visualizer.append(validy_.reshape(-1), model.predict_batch(normed_validx).reshape(-1), validname, 'validation')
+    visualizer = visualize.LinearVisualizer(trainy_.reshape(-1), model.predict_batch(normed_trainx).reshape(-1), trainname, 'train')
+    visualizer.append(validy_.reshape(-1), model.predict_batch(normed_validx).reshape(-1), validname, 'valid')
     visualizer.dump(opt.output + '/fit.txt')
-    visualizer.dump_bad_molecules(opt.output + '/error-0.05.txt', 'validation', threshold=0.05)
-    visualizer.dump_bad_molecules(opt.output + '/error-0.10.txt', 'validation', threshold=0.1)
-    visualizer.dump_bad_molecules(opt.output + '/error-0.15.txt', 'validation', threshold=0.15)
-    visualizer.dump_bad_molecules(opt.output + '/error-0.20.txt', 'validation', threshold=0.2)
+    visualizer.dump_bad_molecules(opt.output + '/error-0.05.txt', 'valid', threshold=0.05)
+    visualizer.dump_bad_molecules(opt.output + '/error-0.10.txt', 'valid', threshold=0.1)
+    visualizer.dump_bad_molecules(opt.output + '/error-0.20.txt', 'valid', threshold=0.2)
     logger.info('Fitting result saved')
 
     if opt.visual:
         visualizer.scatter_yy(savefig=opt.output + '/error-train.png', annotate_threshold=0, marker='x', lw=0.2, s=5)
-        visualizer.hist_error(savefig=opt.output + '/error-hist.png', label='validation', histtype='step', bins=50)
+        visualizer.hist_error(savefig=opt.output + '/error-hist.png', label='valid', histtype='step', bins=50)
         plt.show()
 
 

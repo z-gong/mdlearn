@@ -66,8 +66,6 @@ class TorchMLPRegressor():
             loss.backward()
             self.optimizer.step()
 
-        return self.loss(self.regressor(x), y)
-
     def predict(self, x):
         if type(x) == np.ndarray:
             x = torch.Tensor(x)
