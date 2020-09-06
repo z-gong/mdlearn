@@ -20,8 +20,8 @@ class Selector:
     def __init__(self, *data):
         """ data: np.array/pandas.df
         """
-        self.training_index = None
-        self.validation_index = None
+        self.train_index = None
+        self.valid_index = None
         self.test_index = None
 
         self.kfold = None
@@ -31,7 +31,7 @@ class Selector:
         for d in data[1:]:
             assert len(d) == len(data[0]), 'Data does not have same length'
 
-        self.data = data
+        self.data = tuple(np.array(d) for d in data)
         self.length = len(self.data[0])
         self.selected_num = np.arange(self.length)
 
@@ -39,14 +39,14 @@ class Selector:
         """ Perform 3-partition (training + validating + testing)
         """
 
-        self.training_index = np.zeros(self.length, dtype=bool)
-        self.validation_index = np.zeros(self.length, dtype=bool)
+        self.train_index = np.zeros(self.length, dtype=bool)
+        self.valid_index = np.zeros(self.length, dtype=bool)
         self.test_index = np.zeros(self.length, dtype=bool)
 
         train_valid_num, test_num = separate(self.selected_num, training_size + validation_size)
         train_num, valid_num = separate(train_valid_num, training_size / (training_size + validation_size))
-        self.training_index[train_num] = True
-        self.validation_index[valid_num] = True
+        self.train_index[train_num] = True
+        self.valid_index[valid_num] = True
         self.test_index[test_num] = True
 
     def kfold_partition(self, train_valid_size, fold=5):
@@ -69,15 +69,15 @@ class Selector:
             self.kfold_train_indexes[k][test_num] = False
 
     def kfold_use(self, n):
-        self.training_index = self.kfold_train_indexes[n]
-        self.validation_index = self.kfold_valid_indexes[n]
+        self.train_index = self.kfold_train_indexes[n]
+        self.valid_index = self.kfold_valid_indexes[n]
 
     def training_set(self):
-        idx = self.training_index
+        idx = self.train_index
         return (d[idx] for d in self.data) if len(self.data) > 1 else self.data[0][idx]
 
     def validation_set(self):
-        idx = self.validation_index
+        idx = self.valid_index
         return (d[idx] for d in self.data) if len(self.data) > 1 else self.data[0][idx]
 
     def test_set(self):
@@ -94,15 +94,15 @@ class Selector:
             line2 = f_cache.readline().rstrip('\n')
             line3 = f_cache.readline().rstrip('\n')
 
-            self.training_index = np.array(list(map(int, line1)), dtype=bool)
-            self.validation_index = np.array(list(map(int, line2)), dtype=bool)
+            self.train_index = np.array(list(map(int, line1)), dtype=bool)
+            self.valid_index = np.array(list(map(int, line2)), dtype=bool)
             self.test_index = np.array(list(map(int, line3)), dtype=bool)
 
     def save(self, filename):
         with open(filename, 'w') as f_cache:
-            f_cache.write(''.join(map(str, self.training_index.astype(int))))
+            f_cache.write(''.join(map(str, self.train_index.astype(int))))
             f_cache.write('\n')
-            f_cache.write(''.join(map(str, self.validation_index.astype(int))))
+            f_cache.write(''.join(map(str, self.valid_index.astype(int))))
             f_cache.write('\n')
             f_cache.write(''.join(map(str, self.test_index.astype(int))))
             f_cache.write('\n')

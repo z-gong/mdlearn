@@ -2,10 +2,20 @@ import torch
 import dgl
 import numpy as np
 from rdkit.Chem import AllChem as Chem
+from zipfile import ZipFile
+import os
+import tempfile
+import shutil
 from ..msd import Msd
 
 
-def _read_msd_files(msd_files):
+def _read_msd_files(msd_files, parent_dir):
+    tmp_dir = None
+    if parent_dir.endswith('.zip'):
+        tmp_dir = tempfile.mkdtemp()
+        with ZipFile(parent_dir) as zip:
+            zip.extractall(tmp_dir)
+
     types = set()
     mol_list = []
     mol_dict = {}  # cache molecules read from MSD files
@@ -13,17 +23,20 @@ def _read_msd_files(msd_files):
         if file in mol_dict:
             mol = mol_dict[file]
         else:
-            mol = Msd(file).molecule
+            mol = Msd(os.path.join(tmp_dir or parent_dir, file)).molecule
             for atom in mol.atoms:
                 types.add(atom.type)
             mol_dict[file] = mol
         mol_list.append(mol)
     types = list(sorted(types))
 
+    if tmp_dir is not None:
+        shutil.rmtree(tmp_dir)
+
     return mol_list, types
 
 
-def msd2dgl(msd_files):
+def msd2dgl(msd_files, parent_dir):
     '''
     Convert a list of MSD files to a list of DGLGraph and node features.
 
@@ -32,6 +45,7 @@ def msd2dgl(msd_files):
     Parameters
     ----------
     msd_files : list of str
+    parent_dir : str
 
     Returns
     -------
@@ -39,7 +53,7 @@ def msd2dgl(msd_files):
     feats_list : list of np.ndarray of shape (n_atom, n_feat)
 
     '''
-    mol_list, types = _read_msd_files(msd_files)
+    mol_list, types = _read_msd_files(msd_files, parent_dir)
 
     graph_list = []
     feats_list = []
@@ -61,7 +75,7 @@ def msd2dgl(msd_files):
     return graph_list, feats_list
 
 
-def msd2hetero(msd_files):
+def msd2hetero(msd_files, parent_dir):
     '''
     Convert a list of MSD files to a list of DGLHeteroGraph and node features.
 
@@ -70,6 +84,7 @@ def msd2hetero(msd_files):
     Parameters
     ----------
     msd_files : list of str
+    parent_dir : str
 
     Returns
     -------
@@ -77,7 +92,7 @@ def msd2hetero(msd_files):
     feats_list : list of np.ndarray of shape (n_atom, n_feat)
 
     '''
-    mol_list, types = _read_msd_files(msd_files)
+    mol_list, types = _read_msd_files(msd_files, parent_dir)
 
     graph_list = []
     feats_list = []

@@ -1,8 +1,8 @@
 import os
 import argparse
 import logging
+import math
 import base64
-import pandas as pd
 import numpy as np
 import sklearn as sk
 import torch
@@ -20,7 +20,7 @@ parser.add_argument('-f', '--fp', type=str, help='Fingerprints')
 parser.add_argument('-o', '--output', default='out', type=str, help='Output directory')
 parser.add_argument('-t', '--target', default='density', type=str, help='Fitting target')
 parser.add_argument('-p', '--part', type=str, help='Partition cache file')
-parser.add_argument('-g', '--graph', default='rdk', type=str, choices=['msd', 'rdk'], help='Graph type')
+parser.add_argument('-g', '--graph', default='msd', type=str, choices=['msd', 'rdk'], help='Graph type')
 # parser.add_argument('-l', '--layer', default='16,16', type=str, help='Size of hidden layers')
 parser.add_argument('--epoch', default=1600, type=int, help='Number of epochs')
 parser.add_argument('--lr', default=0.01, type=float, help='Initial learning rate')
@@ -46,8 +46,8 @@ logger.addHandler(flog)
 
 def main():
     logger.info('Reading data and extra features...')
-    fp_array, y_array, names_array = dataloader.load(opt.input, opt.target, opt.fp.split(','))
-    smiles_array = np.array([name.split()[0] for name in names_array])
+    fp_array, y_array, name_array = dataloader.load(opt.input, opt.target, opt.fp.split(','))
+    smiles_list = [name.split()[0] for name in name_array]
     # only take the n_heavy, shortest and n_rotatable from fp_simple
     # fp_array = fp_array[:, (0, 2, 3,)]
     # only take the n_heavy from fp_simple and T, P
@@ -60,14 +60,14 @@ def main():
 
     logger.info('Generating molecular graphs with %s...' % opt.graph)
     if opt.graph == 'msd':
-        msd_list = ['msdfiles/%s.msd' % base64.b64encode(smiles.encode()).decode() for smiles in smiles_array]
-        graph_list, feats_list = msd2dgl(msd_list)
+        msd_list = ['%s.msd' % base64.b64encode(smiles.encode()).decode() for smiles in smiles_list]
+        graph_list, feats_list = msd2dgl(msd_list, '../data/msdfiles.zip')
     elif opt.graph == 'rdk':
-        graph_list, feats_list = smi2dgl(smiles_array)
+        graph_list, feats_list = smi2dgl(smiles_list)
     # graph_list, feats_list = msd2hetero(msd_list)
 
     logger.info('Selecting data...')
-    selector = preprocessing.Selector(smiles_array)
+    selector = preprocessing.Selector(smiles_list)
     if opt.part is not None:
         logger.info('Loading partition file %s' % opt.part)
         selector.load(opt.part)
@@ -80,6 +80,7 @@ def main():
         y = y_array[index]
         feats_node = [feats_list[i] for i in np.where(index)[0]]
         fp_extra = fp_array[index]
+        names = name_array[index]
 
         n_sample = len(graphs)
         if batch_size is None:
@@ -87,12 +88,13 @@ def main():
         batch_size = min(batch_size, n_sample)
         n_batch = n_sample // batch_size
         if n_batch > 1:
-            graphs, y, feats_node, fp_extra = sk.utils.shuffle(graphs, y, feats_node, fp_extra)
+            graphs, y, feats_node, fp_extra, names = sk.utils.shuffle(graphs, y, feats_node, fp_extra, names)
 
         bg_batch = []
         y_batch = []
         feats_node_batch = []
         feats_extra_batch = []
+        names_batch = []
         device = torch.device('cuda:0')
         for i in range(n_batch):
             begin = batch_size * i
@@ -102,24 +104,24 @@ def main():
             feats_node_batch.append(
                 torch.tensor(np.concatenate(feats_node[begin:end]), dtype=torch.float32, device=device))
             feats_extra_batch.append(torch.tensor(fp_extra[begin:end], dtype=torch.float32, device=device))
+            names_batch.append(names[begin:end])
 
-        return bg_batch, y_batch, feats_node_batch, feats_extra_batch
+        return bg_batch, y_batch, feats_node_batch, feats_extra_batch, names_batch
 
-    bg_batch_train, y_batch_train, feats_node_batch_train, feats_extra_batch_train = \
-        get_batched_graph_tensor(selector.training_index, opt.batch)
-    bg_train, y_train, feats_node_train, feats_extra_train = get_batched_graph_tensor(selector.training_index)
-    bg_valid, y_valid, feats_node_valid, feats_extra_valid = get_batched_graph_tensor(selector.validation_index)
+    bg_batch_train, y_batch_train, feats_node_batch_train, feats_extra_batch_train, names_batch_train = \
+        get_batched_graph_tensor(selector.train_index, opt.batch)
+    bg_valid, y_valid, feats_node_valid, feats_extra_valid, names_valid = \
+        get_batched_graph_tensor(selector.valid_index)
 
-    y_train_array = y_array[selector.training_index]
-    y_valid_array = y_array[selector.validation_index]
+    y_train_array = np.concatenate([y.detach().cpu().numpy() for y in y_batch_train])
+    names_train = np.concatenate(names_batch_train)
+    y_valid_array = y_array[selector.valid_index]
 
     logger.info('Training size = %d, Validation size = %d' % (len(y_train_array), len(y_valid_array)))
-
-    in_feats_node = feats_node_train[0].shape[-1]
-    in_feats_extra = feats_extra_train[0].shape[-1]
-
     logger.info('Batch size = %d' % opt.batch)
 
+    in_feats_node = feats_list[0].shape[-1]
+    in_feats_extra = fp_array[0].shape[-1]
     # model = GCNModel(in_feats_node, 16, extra_feats=in_feats_extra)
     model = GATModel(in_feats_node, 16, n_head=3, extra_feats=in_feats_extra)
     model.cuda()
@@ -129,25 +131,26 @@ def main():
 
     header = 'Step Loss MeaSquE MeaSigE MeaUnsE MaxRelE Acc2% Acc5% Acc10%'.split()
     logger.info('%-8s %8s %8s %8s %8s %8s %8s %8s %8s' % tuple(header))
-    # hack for weighted MSELoss
-    # y_train_zeros = y_train * 0
-    # weight = torch.exp(torch.abs(y_train - 450) / 200)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=opt.lrsteps, gamma=opt.lrgamma)
     for epoch in range(opt.epoch):
         model.train()
-        for i_batch in range(len(bg_batch_train)):
+        if (epoch + 1) % 100 == 0:
+            pred_train = []
+        for ib in range(len(bg_batch_train)):
             optimizer.zero_grad()
-            value = model(bg_batch_train[i_batch], feats_node_batch_train[i_batch], feats_extra_batch_train[i_batch])
-            loss = F.mse_loss(value, y_batch_train[i_batch])
+            pred = model(bg_batch_train[ib], feats_node_batch_train[ib], feats_extra_batch_train[ib])
+            loss = F.mse_loss(pred, y_batch_train[ib])
             loss.backward()
             optimizer.step()
+            if (epoch + 1) % 100 == 0:
+                pred_train.append(pred.detach().cpu().numpy())
         scheduler.step()
 
         if (epoch + 1) % 100 == 0:
             model.eval()
-            pred_train = model(bg_train[0], feats_node_train[0], feats_extra_train[0]).detach().cpu().numpy()
+            pred_train = np.concatenate(pred_train)
             pred_valid = model(bg_valid[0], feats_node_valid[0], feats_extra_valid[0]).detach().cpu().numpy()
             mse_train = metrics.mean_squared_error(y_train_array, pred_train)
             mse_valid = metrics.mean_squared_error(y_valid_array, pred_valid)
@@ -163,8 +166,8 @@ def main():
             logger.info(err_line)
     torch.save(model, opt.output + '/model.pt')
 
-    visualizer = visualize.LinearVisualizer(y_train_array, pred_train, names_array[selector.training_index], 'train')
-    visualizer.append(y_valid_array, pred_valid, names_array[selector.validation_index], 'valid')
+    visualizer = visualize.LinearVisualizer(y_train_array, pred_train, names_train, 'train')
+    visualizer.append(y_valid_array, pred_valid, name_array[selector.valid_index], 'valid')
     visualizer.scatter_yy(savefig=opt.output + '/error-train.png', annotate_threshold=0.1, marker='x', lw=0.2, s=5)
     visualizer.hist_error(savefig=opt.output + '/error-hist.png', label='valid', histtype='step', bins=50)
     visualizer.dump(opt.output + '/fit.txt')
