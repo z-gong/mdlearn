@@ -6,10 +6,21 @@ from zipfile import ZipFile
 import os
 import tempfile
 import shutil
-from ..msd import Msd
+
+try:
+    from mstools.topology import Topology, UnitCell
+    from mstools.forcefield import ForceField
+    from mstools.simsys import System
+except:
+    MSTOOLS_FOUND = False
+else:
+    MSTOOLS_FOUND = True
 
 
 def _read_msd_files(msd_files, parent_dir):
+    if not MSTOOLS_FOUND:
+        raise ModuleNotFoundError('mstools is required for parsing MSD file')
+
     tmp_dir = None
     if parent_dir.endswith('.zip'):
         tmp_dir = tempfile.mkdtemp()
@@ -23,7 +34,7 @@ def _read_msd_files(msd_files, parent_dir):
         if file in mol_dict:
             mol = mol_dict[file]
         else:
-            mol = Msd(os.path.join(tmp_dir or parent_dir, file)).molecule
+            mol = Topology.open(os.path.join(tmp_dir or parent_dir, file)).molecules[0]
             for atom in mol.atoms:
                 types.add(atom.type)
             mol_dict[file] = mol
@@ -75,28 +86,45 @@ def msd2dgl(msd_files, parent_dir):
     return graph_list, feats_list
 
 
-def msd2hetero(msd_files, parent_dir):
-    '''
-    Convert a list of MSD files to a list of DGLHeteroGraph and node features.
-
-    The features for each node (atom) is a one-hot vector of the atom types stored in MSD files.
-
-    Parameters
-    ----------
-    msd_files : list of str
-    parent_dir : str
-
-    Returns
-    -------
-    graph_list : list of DGLGraph
-    feats_list : list of np.ndarray of shape (n_atom, n_feat)
-
-    '''
+def msd2hetero(msd_files, parent_dir, ff_file):
     mol_list, types = _read_msd_files(msd_files, parent_dir)
+    top = Topology(mol_list, cell=UnitCell([3, 3, 3]))
+    system = System(top, ForceField.open(ff_file))
+    top, ff = system.topology, system.ff
 
     graph_list = []
-    feats_list = []
-    for mol in mol_list:
+    feats_node_list = []
+    feats_bond_list = []
+    feats_angle_list = []
+    feats_dihedral_list = []
+
+    for mol in top.molecules:
+        feats_node = np.zeros(mol.n_atom, 3)
+        feats_bond = np.zeros(mol.n_bond, 3)
+        feats_angle = np.zeros(mol.n_angle, 3)
+        feats_dihedral = np.zeros(mol.n_dihedral, 3)
+        for i, atom in enumerate(mol.atoms):
+            vdw = ff.get_vdw_term(atom.type, atom.type)
+            feats_node[i] = vdw.sigma, vdw.epsilon, atom.charge
+
+        for i, bond in enumerate(mol.bonds):
+            term = system.bond_terms[id(bond)]
+            feats_bond[i] = term.length, term.fixed, term.k
+
+        for i, angle in enumerate(mol.angles):
+            term = system.angle_classes[id(angle)]
+            feats_angle[i] = term.theta, term.fixed, term.k
+
+        for i, dihedral in enumerate(mol.dihedrals):
+            term = system.dihedral_classes[id(dihedral)]
+            k1, k2, k3, k4 = term.get_opls_parameters()
+            feats_dihedral[i] = k1, k2, k3
+
+        feats_node_list.append(feats_node)
+        feats_bond_list.append(feats_bond)
+        feats_angle_list.append(feats_angle)
+        feats_dihedral_list.append(feats_dihedral)
+
         bonds = [(bond.atom1.id, bond.atom2.id) for bond in mol.bonds]
         edges = list(zip(*bonds))
         u = torch.tensor(edges[0] + edges[1])  # bidirectional
@@ -118,12 +146,7 @@ def msd2hetero(msd_files, parent_dir):
         graph = dgl.heterograph(graph_data)
         graph_list.append(graph)
 
-        feats = np.zeros((graph.num_nodes(), len(types)))
-        for atom in mol.atoms:
-            feats[atom.id][types.index(atom.type)] = 1
-        feats_list.append(feats)
-
-    return graph_list, feats_list
+        return graph_list, feats_node_list, feats_angle_list, feats_angle
 
 
 def smi2dgl(smiles_list):
