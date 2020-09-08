@@ -32,8 +32,8 @@ class GATLayer(nn.Module):
     def forward(self, g, feats_node, feats_edge, etype):
         g.ndata['z'] = self.fc_node(feats_node)
         g.edges[etype].data['z'] = self.fc_edge(feats_edge)
-        g.apply_edges(self.edge_attention)
-        g.update_all(self.message_func, self.reduce_func)
+        g.apply_edges(self.edge_attention, etype=etype)
+        g.update_all(self.message_func, self.reduce_func, etype=etype)
         return g.ndata.pop('h')
 
 
@@ -84,5 +84,5 @@ class ForceFieldGATModel(nn.Module):
         x = F.selu(self.gat1(g, feats_node, feats_bond, feats_angle, feats_dihedral))
         x = F.selu(self.gat2(g, x, feats_bond, feats_angle, feats_dihedral))
         x = F.selu(self.gat3(g, x, feats_bond, feats_angle, feats_dihedral))
-        embedding = self.readout(x)
+        embedding = self.readout(g, x)
         return self.mlp(torch.cat([embedding, feats_graph], dim=1))

@@ -89,7 +89,9 @@ def msd2dgl(msd_files, parent_dir):
 def msd2hetero(msd_files, parent_dir, ff_file):
     mol_list, types = _read_msd_files(msd_files, parent_dir)
     top = Topology(mol_list, cell=UnitCell([3, 3, 3]))
-    system = System(top, ForceField.open(ff_file))
+    ff = ForceField.open(ff_file)
+    top.assign_charge_from_ff(ff)
+    system = System(top, ff, transfer_bonded_terms=True)
     top, ff = system.topology, system.ff
 
     graph_list = []
@@ -99,45 +101,51 @@ def msd2hetero(msd_files, parent_dir, ff_file):
     feats_dihedral_list = []
 
     for mol in top.molecules:
-        feats_node = np.zeros(mol.n_atom, 3)
-        feats_bond = np.zeros(mol.n_bond, 3)
-        feats_angle = np.zeros(mol.n_angle, 3)
-        feats_dihedral = np.zeros(mol.n_dihedral, 3)
+        feats_node = np.zeros((mol.n_atom, 4))
+        feats_bond = np.zeros((mol.n_bond * 2, 3))  # bidirectional
+        feats_angle = np.zeros((mol.n_angle * 2, 3))  # bidirectional
+        feats_dihedral = np.zeros((mol.n_dihedral * 2, 3))  # bidirectional
         for i, atom in enumerate(mol.atoms):
-            vdw = ff.get_vdw_term(atom.type, atom.type)
-            feats_node[i] = vdw.sigma, vdw.epsilon, atom.charge
+            atype = ff.atom_types[atom.type]
+            vdw = ff.get_vdw_term(atype, atype)
+            feats_node[i] = vdw.sigma, vdw.epsilon, atom.charge, 0
 
         for i, bond in enumerate(mol.bonds):
             term = system.bond_terms[id(bond)]
-            feats_bond[i] = term.length, term.fixed, term.k
+            feats_bond[i] = feats_bond[i + mol.n_bond] = term.length * 10, term.fixed, term.k / 1e5
 
         for i, angle in enumerate(mol.angles):
-            term = system.angle_classes[id(angle)]
-            feats_angle[i] = term.theta, term.fixed, term.k
+            term = system.angle_terms[id(angle)]
+            feats_angle[i] = feats_angle[i + mol.n_angle] = term.theta / 100, term.fixed, term.k / 100
 
         for i, dihedral in enumerate(mol.dihedrals):
-            term = system.dihedral_classes[id(dihedral)]
+            term = system.dihedral_terms[id(dihedral)]
             k1, k2, k3, k4 = term.get_opls_parameters()
-            feats_dihedral[i] = k1, k2, k3
+            feats_dihedral[i] = feats_dihedral[i + mol.n_dihedral] = k1, k2, k3
+
+        for i, improper in enumerate(mol.impropers):
+            term = system.improper_terms[id(improper)]
+            if term.k != 0:
+                feats_node[improper.atom1.id_in_mol][-1] = 1
 
         feats_node_list.append(feats_node)
         feats_bond_list.append(feats_bond)
         feats_angle_list.append(feats_angle)
         feats_dihedral_list.append(feats_dihedral)
 
-        bonds = [(bond.atom1.id, bond.atom2.id) for bond in mol.bonds]
+        bonds = [(bond.atom1.id_in_mol, bond.atom2.id_in_mol) for bond in mol.bonds]
         edges = list(zip(*bonds))
         u = torch.tensor(edges[0] + edges[1])  # bidirectional
         v = torch.tensor(edges[1] + edges[0])
         graph_data = {('atom', 'bond', 'atom'): (u, v)}
 
-        angles = [(angle.atom1.id, angle.atom3.id) for angle in mol.angles]
+        angles = [(angle.atom1.id_in_mol, angle.atom3.id_in_mol) for angle in mol.angles]
         edges = list(zip(*angles))
         u = torch.tensor(edges[0] + edges[1])  # bidirectional
         v = torch.tensor(edges[1] + edges[0])
         graph_data.update({('atom', 'angle', 'atom'): (u, v)})
 
-        dihedrals = [(dihedral.atom1.id, dihedral.atom4.id) for dihedral in mol.dihedrals]
+        dihedrals = [(dihedral.atom1.id_in_mol, dihedral.atom4.id_in_mol) for dihedral in mol.dihedrals]
         edges = list(zip(*dihedrals))
         u = torch.tensor(edges[0] + edges[1])  # bidirectional
         v = torch.tensor(edges[1] + edges[0])
@@ -146,7 +154,7 @@ def msd2hetero(msd_files, parent_dir, ff_file):
         graph = dgl.heterograph(graph_data)
         graph_list.append(graph)
 
-        return graph_list, feats_node_list, feats_angle_list, feats_angle
+    return graph_list, feats_node_list, feats_bond_list, feats_angle_list, feats_dihedral_list  # edges are bidirectional
 
 
 def smi2dgl(smiles_list):
