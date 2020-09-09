@@ -1,7 +1,6 @@
 import os
 import argparse
 import logging
-import math
 import base64
 import numpy as np
 import sklearn as sk
@@ -10,7 +9,7 @@ import torch.nn.functional as F
 import dgl
 import matplotlib.pyplot as plt
 
-from mdlearn.gcn.graph import smi2dgl, msd2dgl, msd2hetero
+from mdlearn.gcn.graph import smi2dgl, msd2dgl
 from mdlearn.gcn.model import GCNModel, GATModel
 from mdlearn import preprocessing, metrics, visualize, dataloader
 
@@ -20,7 +19,7 @@ parser.add_argument('-f', '--fp', type=str, help='Fingerprints')
 parser.add_argument('-o', '--output', default='out', type=str, help='Output directory')
 parser.add_argument('-t', '--target', default='density', type=str, help='Fitting target')
 parser.add_argument('-p', '--part', type=str, help='Partition cache file')
-parser.add_argument('-g', '--graph', default='msd', type=str, choices=['msd', 'rdk'], help='Graph type')
+parser.add_argument('-g', '--graph', default='rdk', type=str, choices=['msd', 'rdk'], help='Graph type')
 parser.add_argument('--embed', default=16, type=int, help='Size of graph embedding')
 parser.add_argument('--head', default=3, type=int, help='Heads of GAT network')
 parser.add_argument('--epoch', default=1600, type=int, help='Number of epochs')
@@ -169,10 +168,10 @@ def main():
 
     visualizer = visualize.LinearVisualizer(y_train_array, pred_train, names_train, 'train')
     visualizer.append(y_valid_array, pred_valid, name_array[selector.valid_index], 'valid')
-    visualizer.scatter_yy(savefig=opt.output + '/error-train.png', annotate_threshold=0.1, marker='x', lw=0.2, s=5)
-    visualizer.hist_error(savefig=opt.output + '/error-hist.png', label='valid', histtype='step', bins=50)
     visualizer.dump(opt.output + '/fit.txt')
     visualizer.dump_bad_molecules(opt.output + '/error-0.10.txt', 'valid', threshold=0.1)
+    visualizer.scatter_yy(savefig=opt.output + '/error-train.png', annotate_threshold=0.1, marker='x', lw=0.2, s=5)
+    visualizer.hist_error(savefig=opt.output + '/error-hist.png', label='valid', histtype='step', bins=50)
     plt.show()
 
 

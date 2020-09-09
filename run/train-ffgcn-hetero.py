@@ -9,8 +9,8 @@ import torch.nn.functional as F
 import dgl
 import matplotlib.pyplot as plt
 
-from mdlearn.gcn.graph import smi2dgl, msd2dgl_ff
-from mdlearn.gcn.model_ff import ForceFieldGATModel
+from mdlearn.gcn.graph import smi2dgl, msd2dgl, msd2dgl_ff_hetero
+from mdlearn.gcn.model_ff_hetero import ForceFieldGATModel
 from mdlearn import preprocessing, metrics, visualize, dataloader
 
 parser = argparse.ArgumentParser()
@@ -60,8 +60,8 @@ def main():
 
     logger.info('Generating molecular graphs with %s...' % opt.graph)
     msd_list = ['%s.msd' % base64.b64encode(smiles.encode()).decode() for smiles in smiles_list]
-    graph_list, feats_node_list, feats_edge_list = \
-        msd2dgl_ff(msd_list, '../data/msdfiles.zip', '../data/dump-MGI.ppf')
+    graph_list, feats_node_list, feats_bond_list, feats_angle_list, feats_dihedral_list = \
+        msd2dgl_ff_hetero(msd_list, '../data/msdfiles.zip', '../data/dump-MGI.ppf')
 
     logger.info('Selecting data...')
     selector = preprocessing.Selector(smiles_list)
@@ -76,7 +76,9 @@ def main():
         graphs = [graph_list[i] for i in np.where(index)[0]]
         y = y_array[index]
         feats_node = [feats_node_list[i] for i in np.where(index)[0]]
-        feats_edge = [feats_edge_list[i] for i in np.where(index)[0]]
+        feats_b = [feats_bond_list[i] for i in np.where(index)[0]]
+        feats_a = [feats_angle_list[i] for i in np.where(index)[0]]
+        feats_d = [feats_dihedral_list[i] for i in np.where(index)[0]]
         fp_extra = fp_array[index]
         names = name_array[index]
 
@@ -86,13 +88,15 @@ def main():
         batch_size = min(batch_size, n_sample)
         n_batch = n_sample // batch_size
         if n_batch > 1:
-            graphs, y, feats_node, feats_edge, fp_extra, names = \
-                sk.utils.shuffle(graphs, y, feats_node, feats_edge, fp_extra, names)
+            graphs, y, feats_node, feats_b, feats_a, feats_d, fp_extra, names = \
+                sk.utils.shuffle(graphs, y, feats_node, feats_b, feats_a, feats_d, fp_extra, names)
 
         bg_batch = []
         y_batch = []
         feats_node_batch = []
-        feats_edge_batch = []
+        feats_b_batch = []
+        feats_a_batch = []
+        feats_d_batch = []
         feats_extra_batch = []
         names_batch = []
         device = torch.device('cuda:0')
@@ -103,16 +107,20 @@ def main():
             y_batch.append(torch.tensor(y[begin:end], dtype=torch.float32, device=device))
             feats_node_batch.append(
                 torch.tensor(np.concatenate(feats_node[begin:end]), dtype=torch.float32, device=device))
-            feats_edge_batch.append(
-                torch.tensor(np.concatenate(feats_edge[begin:end]), dtype=torch.float32, device=device))
+            feats_b_batch.append(
+                torch.tensor(np.concatenate(feats_b[begin:end]), dtype=torch.float32, device=device))
+            feats_a_batch.append(
+                torch.tensor(np.concatenate(feats_a[begin:end]), dtype=torch.float32, device=device))
+            feats_d_batch.append(
+                torch.tensor(np.concatenate(feats_d[begin:end]), dtype=torch.float32, device=device))
             feats_extra_batch.append(torch.tensor(fp_extra[begin:end], dtype=torch.float32, device=device))
             names_batch.append(names[begin:end])
 
-        return bg_batch, y_batch, feats_node_batch, feats_edge_batch, feats_extra_batch, names_batch
+        return bg_batch, y_batch, feats_node_batch, feats_b_batch, feats_a_batch, feats_d_batch, feats_extra_batch, names_batch
 
-    bg_batch_train, y_batch_train, feats_node_batch_train, feats_edge_batch_train, feats_extra_batch_train, names_batch_train = \
+    bg_batch_train, y_batch_train, feats_node_batch_train, feats_b_batch_train, feats_a_batch_train, feats_d_batch_train, feats_extra_batch_train, names_batch_train = \
         get_batched_graph_tensor(selector.train_index, opt.batch)
-    bg_valid, y_valid, feats_node_valid, feats_edge_valid, feats_extra_valid, names_valid = \
+    bg_valid, y_valid, feats_node_valid, feats_b_valid, feats_a_valid, feats_d_valid, feats_extra_valid, names_valid = \
         get_batched_graph_tensor(selector.valid_index)
 
     y_train_array = np.concatenate([y.detach().cpu().numpy() for y in y_batch_train])
@@ -124,7 +132,8 @@ def main():
 
     in_feats_node = feats_node_list[0].shape[-1]
     in_feats_extra = fp_array[0].shape[-1]
-    model = ForceFieldGATModel(in_feats_node, feats_edge_list[0].shape[-1], in_feats_extra, out_dim=opt.embed, n_head=1)
+    model = ForceFieldGATModel(in_feats_node, feats_bond_list[0].shape[-1], feats_angle_list[0].shape[-1],
+                               feats_dihedral_list[0].shape[-1], in_feats_extra, out_dim=opt.embed, n_head=1)
     model.cuda()
     print(model)
     for name, param in model.named_parameters():
@@ -141,8 +150,8 @@ def main():
             pred_train = []
         for ib in range(len(bg_batch_train)):
             optimizer.zero_grad()
-            pred = model(bg_batch_train[ib], feats_node_batch_train[ib], feats_edge_batch_train[ib],
-                         feats_extra_batch_train[ib])
+            pred = model(bg_batch_train[ib], feats_node_batch_train[ib], feats_b_batch_train[ib],
+                         feats_a_batch_train[ib], feats_d_batch_train[ib], feats_extra_batch_train[ib])
             loss = F.mse_loss(pred, y_batch_train[ib])
             loss.backward()
             optimizer.step()
@@ -153,7 +162,7 @@ def main():
         if (epoch + 1) % 100 == 0:
             model.eval()
             pred_train = np.concatenate(pred_train)
-            pred_valid = model(bg_valid[0], feats_node_valid[0], feats_edge_valid[0],
+            pred_valid = model(bg_valid[0], feats_node_valid[0], feats_b_valid[0], feats_a_valid[0], feats_d_valid[0],
                                feats_extra_valid[0]).detach().cpu().numpy()
             mse_train = metrics.mean_squared_error(y_train_array, pred_train)
             mse_valid = metrics.mean_squared_error(y_valid_array, pred_valid)

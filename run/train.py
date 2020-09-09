@@ -5,18 +5,13 @@ import sys
 import argparse
 import logging
 import shutil
-from pathlib import Path
-from sklearn.decomposition import PCA
 import pickle
-
-logging.captureWarnings(True)
-
 import matplotlib
-
-matplotlib.rcParams.update({'font.size': 15})
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from pathlib import Path
+from sklearn.decomposition import PCA
 
 sys.path.append('..')
 from mdlearn import fitting, visualize, metrics, preprocessing, validation, dataloader
@@ -30,7 +25,6 @@ def main():
     parser.add_argument('-t', '--target', default='raw_density', type=str, help='Fitting target')
     parser.add_argument('-p', '--part', default='', type=str, help='Partition cache file')
     parser.add_argument('-l', '--layer', default='16,16', type=str, help='Size of hidden layers')
-    parser.add_argument('--visual', default=1, type=int, help='Visualzation data')
     parser.add_argument('--gpu', default=1, type=int, help='Using gpu')
     parser.add_argument('--epoch', default="500,1000,1000", type=str, help='Number of epochs')
     parser.add_argument('--batch', default=1000, type=int, help='Batch size')
@@ -220,15 +214,11 @@ def main():
     visualizer = visualize.LinearVisualizer(trainy_.reshape(-1), model.predict_batch(normed_trainx).reshape(-1), trainname, 'train')
     visualizer.append(validy_.reshape(-1), model.predict_batch(normed_validx).reshape(-1), validname, 'valid')
     visualizer.dump(opt.output + '/fit.txt')
-    visualizer.dump_bad_molecules(opt.output + '/error-0.05.txt', 'valid', threshold=0.05)
     visualizer.dump_bad_molecules(opt.output + '/error-0.10.txt', 'valid', threshold=0.1)
     visualizer.dump_bad_molecules(opt.output + '/error-0.20.txt', 'valid', threshold=0.2)
-    logger.info('Fitting result saved')
-
-    if opt.visual:
-        visualizer.scatter_yy(savefig=opt.output + '/error-train.png', annotate_threshold=0, marker='x', lw=0.2, s=5)
-        visualizer.hist_error(savefig=opt.output + '/error-hist.png', label='valid', histtype='step', bins=50)
-        plt.show()
+    visualizer.scatter_yy(savefig=opt.output + '/error-train.png', annotate_threshold=0.1, marker='x', lw=0.2, s=5)
+    visualizer.hist_error(savefig=opt.output + '/error-hist.png', label='valid', histtype='step', bins=50)
+    plt.show()
 
 
 def pca_nd(X, X_valid, n, logger):
