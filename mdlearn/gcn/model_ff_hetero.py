@@ -79,7 +79,7 @@ class ForceFieldGATModel(nn.Module):
 
     def forward(self, g, feats_node, feats_bond, feats_angle, feats_dihedral, feats_graph):
         x = F.selu(self.gat1(g, feats_node, feats_bond, feats_angle, feats_dihedral))
-        x = F.selu(self.gat3(g, x, feats_bond, feats_angle, feats_dihedral))
+        x = F.selu(self.gat2(g, x, feats_bond, feats_angle, feats_dihedral))
         x = F.selu(self.gat3(g, x, feats_bond, feats_angle, feats_dihedral))
         embedding = self.readout(g, x)
         return self.mlp(torch.cat([embedding, feats_graph], dim=1))

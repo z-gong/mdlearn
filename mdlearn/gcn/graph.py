@@ -193,11 +193,11 @@ def msd2dgl_ff_hetero(msd_files, parent_dir, ff_file):
         for i, dihedral in enumerate(mol.dihedrals):
             term = system.dihedral_terms[id(dihedral)]
             k1, k2, k3, k4 = term.get_opls_parameters()
-            feats_dihedral[i] = feats_dihedral[i + mol.n_dihedral] = k1, k2, k3
+            feats_dihedral[i] = feats_dihedral[i + mol.n_dihedral] = k1 / 10, k2 / 10, k3 / 10
 
         for i, improper in enumerate(mol.impropers):
             term = system.improper_terms[id(improper)]
-            feats_node[improper.atom1.id_in_mol][-1] = term.k
+            feats_node[improper.atom1.id_in_mol][-1] = term.k / 10
 
         feats_node_list.append(feats_node)
         feats_bond_list.append(feats_bond)

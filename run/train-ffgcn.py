@@ -123,8 +123,9 @@ def main():
     logger.info('Batch size = %d' % opt.batch)
 
     in_feats_node = feats_node_list[0].shape[-1]
+    in_feats_edge = feats_edge_list[0].shape[-1]
     in_feats_extra = fp_array[0].shape[-1]
-    model = ForceFieldGATModel(in_feats_node, feats_edge_list[0].shape[-1], in_feats_extra, out_dim=opt.embed, n_head=1)
+    model = ForceFieldGATModel(in_feats_node, in_feats_edge, in_feats_extra, out_dim=opt.embed, n_head=opt.head)
     model.cuda()
     print(model)
     for name, param in model.named_parameters():
