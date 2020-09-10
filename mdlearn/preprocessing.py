@@ -1,12 +1,13 @@
 """ Preprocessing
 """
 
-import sklearn.model_selection
+import hashlib
+import sklearn as sk
 import sklearn.preprocessing
 import numpy as np
 
 
-def separate(array, frac):
+def _separate_array(array, frac):
     n = int(round(len(array) * frac))
     train_array = np.random.choice(array, n, replace=False)
     test_array = np.array([i for i in array if i not in train_array], dtype=int)
@@ -43,8 +44,8 @@ class Selector:
         self.valid_index = np.zeros(self.length, dtype=bool)
         self.test_index = np.zeros(self.length, dtype=bool)
 
-        train_valid_num, test_num = separate(self.selected_num, training_size + validation_size)
-        train_num, valid_num = separate(train_valid_num, training_size / (training_size + validation_size))
+        train_valid_num, test_num = _separate_array(self.selected_num, training_size + validation_size)
+        train_num, valid_num = _separate_array(train_valid_num, training_size / (training_size + validation_size))
         self.train_index[train_num] = True
         self.valid_index[valid_num] = True
         self.test_index[test_num] = True
@@ -56,14 +57,14 @@ class Selector:
         self.test_index = np.zeros(self.length, dtype=bool)
 
         if train_valid_size < 1:
-            train_valid_num, test_num = separate(self.selected_num, train_valid_size)
+            train_valid_num, test_num = _separate_array(self.selected_num, train_valid_size)
         else:
             train_valid_num = self.selected_num[:]
             test_num = np.array([], dtype=int)
         self.test_index[test_num] = True
 
         for k in range(fold):
-            valid_num, train_valid_num = separate(train_valid_num, 1 / (fold - k))
+            valid_num, train_valid_num = _separate_array(train_valid_num, 1 / (fold - k))
             self.kfold_valid_indexes[k][valid_num] = True
             self.kfold_train_indexes[k][valid_num] = False
             self.kfold_train_indexes[k][test_num] = False
@@ -138,3 +139,32 @@ class Scaler:
             self.scaler_.var_ = np.array(list(map(float, line2.split(','))))
             self.scaler_.scale_ = np.array(list(map(float, line3.split(','))))
             assert len(self.scaler_.mean_) == len(self.scaler_.var_)
+
+
+def separate_batches(data_list, batch_size, smiles_list=None):
+    assert len(data_list) > 0
+    n_sample = len(data_list[0])
+    for data in data_list[1:]:
+        assert len(data) == n_sample
+    if smiles_list is not None:
+        assert len(smiles_list) == n_sample
+
+    if batch_size is None:
+        batch_size = n_sample
+    batch_size = min(batch_size, n_sample)
+    n_batch = n_sample // batch_size
+    if n_batch > 1:
+        if smiles_list is None:
+            data_list = sk.utils.shuffle(data_list)
+        else:
+            key_list = [int(hashlib.sha1(s.encode()).hexdigest(), 16) % 10 ** 8 for s in smiles_list]
+            data_list = [[d for (k, d) in sorted(zip(key_list, data), key=lambda x: x[0])] for data in data_list]
+
+    data_batch_list = [[] for data in data_list]
+    for i in range(n_batch):
+        begin = batch_size * i
+        end = batch_size * (i + 1) if i != n_batch else -1
+        for i, data in enumerate(data_list):
+            data_batch_list[i].append(data[begin: end])
+
+    return n_batch, data_batch_list

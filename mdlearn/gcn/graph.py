@@ -175,7 +175,7 @@ def msd2dgl_ff_hetero(msd_files, parent_dir, ff_file):
     for mol in top.molecules:
         feats_node = np.zeros((mol.n_atom, 4))
         feats_bond = np.zeros((mol.n_bond * 2, 3))  # bidirectional
-        feats_angle = np.zeros((mol.n_angle * 2, 3))  # bidirectional
+        feats_angle = np.zeros((mol.n_angle * 2, 2))  # bidirectional
         feats_dihedral = np.zeros((mol.n_dihedral * 2, 3))  # bidirectional
         for i, atom in enumerate(mol.atoms):
             atype = ff.atom_types[atom.type]
@@ -188,7 +188,7 @@ def msd2dgl_ff_hetero(msd_files, parent_dir, ff_file):
 
         for i, angle in enumerate(mol.angles):
             term = system.angle_terms[id(angle)]
-            feats_angle[i] = feats_angle[i + mol.n_angle] = term.theta / 100, term.fixed, term.k / 100
+            feats_angle[i] = feats_angle[i + mol.n_angle] = term.theta / 100, term.k / 100
 
         for i, dihedral in enumerate(mol.dihedrals):
             term = system.dihedral_terms[id(dihedral)]
@@ -216,11 +216,11 @@ def msd2dgl_ff_hetero(msd_files, parent_dir, ff_file):
         v = torch.tensor(edges[1] + edges[0])
         graph_data.update({('atom', 'angle', 'atom'): (u, v)})
 
-        dihedrals = [(dihedral.atom1.id_in_mol, dihedral.atom4.id_in_mol) for dihedral in mol.dihedrals]
-        edges = list(zip(*dihedrals))
-        u = torch.tensor(edges[0] + edges[1])  # bidirectional
-        v = torch.tensor(edges[1] + edges[0])
-        graph_data.update({('atom', 'dihedral', 'atom'): (u, v)})
+        # dihedrals = [(dihedral.atom1.id_in_mol, dihedral.atom4.id_in_mol) for dihedral in mol.dihedrals]
+        # edges = list(zip(*dihedrals))
+        # u = torch.tensor(edges[0] + edges[1])  # bidirectional
+        # v = torch.tensor(edges[1] + edges[0])
+        # graph_data.update({('atom', 'dihedral', 'atom'): (u, v)})
 
         graph = dgl.heterograph(graph_data)
         graph_list.append(graph)
@@ -263,21 +263,13 @@ def smi2dgl(smiles_list):
         graph = dgl.add_self_loop(graph)
         graph_list.append(graph)
 
-        feats = np.zeros((graph.num_nodes(), 6))
+        feats = np.zeros((graph.num_nodes(), 9))
+        # four elements, four neighbours, one bool denotes aromaticity
+        elements = ['C', 'H', 'O', 'N']
         for atom in rdkm.GetAtoms():
-            if atom.GetAtomicNum() == 1:
-                idx = 0
-            else:
-                idx = 1
-                if atom.GetIsAromatic():
-                    idx = 2
-                else:
-                    n_neigh = len(atom.GetNeighbors())
-                    if n_neigh == 3:
-                        idx = 3
-                    if n_neigh == 2:
-                        idx = 4
-            feats[atom.GetIdx()][idx] = 1
+            feats[atom.GetIdx()][elements.index(atom.GetSymbol())] = 1
+            n_neigh = len(atom.GetNeighbors())
+            feats[atom.GetIdx()][len(elements) + n_neigh -1] = 1
             if atom.IsInRing():
                 feats[atom.GetIdx()][-1] = 1
         feats_list.append(feats)

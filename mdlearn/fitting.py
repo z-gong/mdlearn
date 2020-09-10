@@ -19,8 +19,8 @@ class TorchMLPRegressor():
         loss_class = self.args_opt.pop('loss', torch.nn.MSELoss)
 
         def init_layer(layer):
-            torch.nn.init.normal(layer.weight, std=0.5)
-            torch.nn.init.normal(layer.bias, mean=0.01, std=0.001)
+            torch.nn.init.normal_(layer.weight, std=0.5)
+            torch.nn.init.normal_(layer.bias, mean=0.01, std=0.001)
 
         layers = []
         if not self.layers:

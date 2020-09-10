@@ -26,7 +26,7 @@ def load(filename, target, fps: []):
 
     fp_list = []
     for smiles in df['SMILES']:
-        fp_list.append(fp_dict[smiles])
+        fp_list.append(fp_dict.get(smiles, []))
 
     ret = np.vstack(fp_list)
 

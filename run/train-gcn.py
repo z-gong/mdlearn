@@ -26,7 +26,7 @@ parser.add_argument('--epoch', default=1600, type=int, help='Number of epochs')
 parser.add_argument('--lr', default=0.01, type=float, help='Initial learning rate')
 parser.add_argument('--lrsteps', default=400, type=int, help='Scale learning rate every these steps')
 parser.add_argument('--lrgamma', default=0.2, type=float, help='Scaling factor for learning rate')
-parser.add_argument('--batch', default=1000, type=int, help='Batch size')
+parser.add_argument('--batch', default=1000, type=int, help='Approximate batch size')
 
 opt = parser.parse_args()
 
@@ -64,7 +64,8 @@ def main():
         graph_list, feats_list = msd2dgl(msd_list, '../data/msdfiles.zip')
     elif opt.graph == 'rdk':
         graph_list, feats_list = smi2dgl(smiles_list)
-    # graph_list, feats_list = msd2hetero(msd_list)
+    else:
+        raise
 
     logger.info('Selecting data...')
     selector = preprocessing.Selector(smiles_list)
@@ -75,50 +76,37 @@ def main():
         logger.warning('Partition file not provided. Using auto-partition instead')
         selector.partition(0.8, 0.2)
 
-    def get_batched_graph_tensor(index, batch_size=None):
-        graphs = [graph_list[i] for i in np.where(index)[0]]
-        y = y_array[index]
-        feats_node = [feats_list[i] for i in np.where(index)[0]]
-        fp_extra = fp_array[index]
-        names = name_array[index]
+    device = torch.device('cuda:0')
+    # batched data for training set
+    data_list = [[data[i] for i in np.where(selector.train_index)[0]]
+                 for data in (graph_list, y_array, feats_list, fp_array, name_array, smiles_list)]
+    n_batch, (graphs_batch, y_batch, feats_node_batch, feats_extra_batch, names_batch) = \
+        preprocessing.separate_batches(data_list[:-1], opt.batch, data_list[-1])
+    bg_batch_train = [dgl.batch(graphs).to(device) for graphs in graphs_batch]
+    y_batch_train = [torch.tensor(y, dtype=torch.float32, device=device) for y in y_batch]
+    feats_node_batch_train = [torch.tensor(np.concatenate(feats_node), dtype=torch.float32, device=device)
+                              for feats_node in feats_node_batch]
+    feats_extra_batch_train = [torch.tensor(feats_extra, dtype=torch.float32, device=device)
+                               for feats_extra in feats_extra_batch]
+    # for plot
+    y_train_array = np.concatenate(y_batch)
+    names_train = np.concatenate(names_batch)
 
-        n_sample = len(graphs)
-        if batch_size is None:
-            batch_size = n_sample
-        batch_size = min(batch_size, n_sample)
-        n_batch = n_sample // batch_size
-        if n_batch > 1:
-            graphs, y, feats_node, fp_extra, names = sk.utils.shuffle(graphs, y, feats_node, fp_extra, names)
-
-        bg_batch = []
-        y_batch = []
-        feats_node_batch = []
-        feats_extra_batch = []
-        names_batch = []
-        device = torch.device('cuda:0')
-        for i in range(n_batch):
-            begin = batch_size * i
-            end = batch_size * (i + 1) if i != n_batch else -1
-            bg_batch.append(dgl.batch(graphs[begin: end]).to(device))
-            y_batch.append(torch.tensor(y[begin:end], dtype=torch.float32, device=device))
-            feats_node_batch.append(
-                torch.tensor(np.concatenate(feats_node[begin:end]), dtype=torch.float32, device=device))
-            feats_extra_batch.append(torch.tensor(fp_extra[begin:end], dtype=torch.float32, device=device))
-            names_batch.append(names[begin:end])
-
-        return bg_batch, y_batch, feats_node_batch, feats_extra_batch, names_batch
-
-    bg_batch_train, y_batch_train, feats_node_batch_train, feats_extra_batch_train, names_batch_train = \
-        get_batched_graph_tensor(selector.train_index, opt.batch)
-    bg_valid, y_valid, feats_node_valid, feats_extra_valid, names_valid = \
-        get_batched_graph_tensor(selector.valid_index)
-
-    y_train_array = np.concatenate([y.detach().cpu().numpy() for y in y_batch_train])
-    names_train = np.concatenate(names_batch_train)
+    # data for validation set
+    graphs, y, feats_node, feats_extra, names_valid = \
+        [[data[i] for i in np.where(selector.valid_index)[0]]
+         for data in (graph_list, y_array, feats_list, fp_array, name_array)]
+    bg_valid, y_valid, feats_node_valid, feats_extra_valid = (
+        dgl.batch(graphs).to(device),
+        torch.tensor(y, dtype=torch.float32, device=device),
+        torch.tensor(np.concatenate(feats_node), dtype=torch.float32, device=device),
+        torch.tensor(feats_extra, dtype=torch.float32, device=device),
+    )
+    # for plot
     y_valid_array = y_array[selector.valid_index]
 
     logger.info('Training size = %d, Validation size = %d' % (len(y_train_array), len(y_valid_array)))
-    logger.info('Batch size = %d' % opt.batch)
+    logger.info('Batches = %d, Batch size ~= %d' % (n_batch, opt.batch))
 
     in_feats_node = feats_list[0].shape[-1]
     in_feats_extra = fp_array[0].shape[-1]
@@ -151,7 +139,7 @@ def main():
         if (epoch + 1) % 100 == 0:
             model.eval()
             pred_train = np.concatenate(pred_train)
-            pred_valid = model(bg_valid[0], feats_node_valid[0], feats_extra_valid[0]).detach().cpu().numpy()
+            pred_valid = model(bg_valid, feats_node_valid, feats_extra_valid).detach().cpu().numpy()
             mse_train = metrics.mean_squared_error(y_train_array, pred_train)
             mse_valid = metrics.mean_squared_error(y_valid_array, pred_valid)
             err_line = '%-8i %8.2e %8.2e %8.1f %8.1f %8.1f %8.1f %8.1f %8.1f' % (
@@ -167,7 +155,7 @@ def main():
     torch.save(model, opt.output + '/model.pt')
 
     visualizer = visualize.LinearVisualizer(y_train_array, pred_train, names_train, 'train')
-    visualizer.append(y_valid_array, pred_valid, name_array[selector.valid_index], 'valid')
+    visualizer.append(y_valid_array, pred_valid, names_valid, 'valid')
     visualizer.dump(opt.output + '/fit.txt')
     visualizer.dump_bad_molecules(opt.output + '/error-0.10.txt', 'valid', threshold=0.1)
     visualizer.scatter_yy(savefig=opt.output + '/error-train.png', annotate_threshold=0.1, marker='x', lw=0.2, s=5)

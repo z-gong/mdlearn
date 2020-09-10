@@ -82,15 +82,9 @@ class GATModel(nn.Module):
 
         self.mlp = MLPModel(hidden_size + extra_feats, 1, [2 * hidden_size, hidden_size])
 
-        self.hidden_size = hidden_size
-        self.n_head = n_head
-        self.activation = F.selu
-
     def forward(self, g, feats_node, feats_graph):
-        x = self.activation(self.gat1(g, feats_node)).view(-1, self.hidden_size * self.n_head)
-        x = self.activation(self.gat2(g, x)).view(-1, self.hidden_size * self.n_head)
-        x = self.activation(self.gat3(g, x)).view(-1, self.hidden_size)
+        x = F.selu(self.gat1(g, feats_node)).view(g.number_of_nodes(), -1)
+        x = F.selu(self.gat2(g, x)).view(g.number_of_nodes(), -1)
+        x = F.selu(self.gat3(g, x)).view(g.number_of_nodes(), -1)
         embedding = self.readout(g, x)
         return self.mlp(torch.cat((embedding, feats_graph), dim=1))
-
-
