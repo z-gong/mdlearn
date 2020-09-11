@@ -225,7 +225,10 @@ def msd2dgl_ff_hetero(msd_files, parent_dir, ff_file):
         graph = dgl.heterograph(graph_data)
         graph_list.append(graph)
 
-    return graph_list, feats_node_list, feats_bond_list, feats_angle_list, feats_dihedral_list
+    return graph_list, feats_node_list, {'bond'    : feats_bond_list,
+                                         'angle'   : feats_angle_list,
+                                         # 'dihedral': feats_dihedral_list
+                                         }
 
 
 def smi2dgl(smiles_list):
@@ -269,7 +272,7 @@ def smi2dgl(smiles_list):
         for atom in rdkm.GetAtoms():
             feats[atom.GetIdx()][elements.index(atom.GetSymbol())] = 1
             n_neigh = len(atom.GetNeighbors())
-            feats[atom.GetIdx()][len(elements) + n_neigh -1] = 1
+            feats[atom.GetIdx()][len(elements) + n_neigh - 1] = 1
             if atom.IsInRing():
                 feats[atom.GetIdx()][-1] = 1
         feats_list.append(feats)

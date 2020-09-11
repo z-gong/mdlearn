@@ -19,7 +19,7 @@ parser.add_argument('-f', '--fp', type=str, help='Fingerprints')
 parser.add_argument('-o', '--output', default='out', type=str, help='Output directory')
 parser.add_argument('-t', '--target', default='density', type=str, help='Fitting target')
 parser.add_argument('-p', '--part', type=str, help='Partition cache file')
-parser.add_argument('-g', '--graph', default='rdk', type=str, choices=['msd', 'rdk'], help='Graph type')
+parser.add_argument('-g', '--graph', default='msd', type=str, choices=['msd', 'rdk'], help='Graph type')
 parser.add_argument('--embed', default=16, type=int, help='Size of graph embedding')
 parser.add_argument('--head', default=3, type=int, help='Heads of GAT network')
 parser.add_argument('--epoch', default=1600, type=int, help='Number of epochs')
@@ -46,26 +46,28 @@ logger.addHandler(flog)
 
 def main():
     logger.info('Reading data and extra features...')
-    fp_array, y_array, name_array = dataloader.load(opt.input, opt.target, opt.fp.split(','))
+    fp_files = [] if opt.fp is None else opt.fp.split(',')
+    fp_array, y_array, name_array = dataloader.load(opt.input, opt.target, fp_files)
     smiles_list = [name.split()[0] for name in name_array]
-    # only take the n_heavy, shortest and n_rotatable from fp_simple
-    # fp_array = fp_array[:, (0, 2, 3,)]
-    # only take the n_heavy from fp_simple and T, P
-    fp_array = fp_array[:, (0, -2, -1)]
-
-    logger.info('Normalizing extra features...')
-    scaler = preprocessing.Scaler()
-    scaler.fit(fp_array)
-    fp_array = scaler.transform(fp_array)
 
     logger.info('Generating molecular graphs with %s...' % opt.graph)
-    if opt.graph == 'msd':
+    if opt.graph == 'rdk':
+        graph_list, feats_list = smi2dgl(smiles_list)
+    elif opt.graph == 'msd':
         msd_list = ['%s.msd' % base64.b64encode(smiles.encode()).decode() for smiles in smiles_list]
         graph_list, feats_list = msd2dgl(msd_list, '../data/msdfiles.zip')
-    elif opt.graph == 'rdk':
-        graph_list, feats_list = smi2dgl(smiles_list)
     else:
         raise
+    logger.info('Example node feature: %s' % feats_list[0][0])
+
+    fp_extra = np.concatenate(([[g.number_of_nodes(), g.number_of_edges()] for g in graph_list], fp_array), axis=1)
+    if fp_extra.shape[-1] > 0:
+        logger.info('Example extra graph feature: %s' % fp_extra[0])
+        logger.info('Normalizing extra features...')
+        scaler = preprocessing.Scaler()
+        scaler.fit(fp_extra)
+        scaler.save(opt.output + '/scale.txt')
+        fp_extra = scaler.transform(fp_extra)
 
     logger.info('Selecting data...')
     selector = preprocessing.Selector(smiles_list)
@@ -79,7 +81,7 @@ def main():
     device = torch.device('cuda:0')
     # batched data for training set
     data_list = [[data[i] for i in np.where(selector.train_index)[0]]
-                 for data in (graph_list, y_array, feats_list, fp_array, name_array, smiles_list)]
+                 for data in (graph_list, y_array, feats_list, fp_extra, name_array, smiles_list)]
     n_batch, (graphs_batch, y_batch, feats_node_batch, feats_extra_batch, names_batch) = \
         preprocessing.separate_batches(data_list[:-1], opt.batch, data_list[-1])
     bg_batch_train = [dgl.batch(graphs).to(device) for graphs in graphs_batch]
@@ -95,7 +97,7 @@ def main():
     # data for validation set
     graphs, y, feats_node, feats_extra, names_valid = \
         [[data[i] for i in np.where(selector.valid_index)[0]]
-         for data in (graph_list, y_array, feats_list, fp_array, name_array)]
+         for data in (graph_list, y_array, feats_list, fp_extra, name_array)]
     bg_valid, y_valid, feats_node_valid, feats_extra_valid = (
         dgl.batch(graphs).to(device),
         torch.tensor(y, dtype=torch.float32, device=device),
@@ -109,7 +111,7 @@ def main():
     logger.info('Batches = %d, Batch size ~= %d' % (n_batch, opt.batch))
 
     in_feats_node = feats_list[0].shape[-1]
-    in_feats_extra = fp_array[0].shape[-1]
+    in_feats_extra = fp_extra[0].shape[-1]
     # model = GCNModel(in_feats_node, opt.embed, extra_feats=in_feats_extra)
     model = GATModel(in_feats_node, opt.embed, n_head=opt.head, extra_feats=in_feats_extra)
     model.cuda()

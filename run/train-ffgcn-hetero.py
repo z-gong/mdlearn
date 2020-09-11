@@ -46,22 +46,26 @@ logger.addHandler(flog)
 
 def main():
     logger.info('Reading data and extra features...')
-    fp_array, y_array, name_array = dataloader.load(opt.input, opt.target, opt.fp.split(','))
+    fp_files = [] if opt.fp is None else opt.fp.split(',')
+    fp_array, y_array, name_array = dataloader.load(opt.input, opt.target, fp_files)
     smiles_list = [name.split()[0] for name in name_array]
-    # only take the n_heavy, shortest and n_rotatable from fp_simple
-    # fp_array = fp_array[:, (0, 2, 3,)]
-    # only take the n_heavy from fp_simple and T, P
-    fp_array = fp_array[:, (0, -2, -1)]
-
-    logger.info('Normalizing extra features...')
-    scaler = preprocessing.Scaler()
-    scaler.fit(fp_array)
-    fp_array = scaler.transform(fp_array)
 
     logger.info('Generating molecular graphs with %s...' % opt.graph)
     msd_list = ['%s.msd' % base64.b64encode(smiles.encode()).decode() for smiles in smiles_list]
-    graph_list, feats_node_list, feats_b_list, feats_a_list, feats_d_list = \
+    graph_list, feats_node_list, feats_edges_list = \
         msd2dgl_ff_hetero(msd_list, '../data/msdfiles.zip', '../data/dump-MGI.ppf')
+    logger.info('Example node feature: %s' % feats_node_list[0][0])
+    for edge_type, feats_list in feats_edges_list.items():
+        logger.info('Example %s feature: %s' % (edge_type, feats_list[0][0]))
+
+    fp_extra = np.concatenate(([[g.number_of_nodes(), g.number_of_edges()] for g in graph_list], fp_array), axis=1)
+    if fp_extra.shape[-1] > 0:
+        logger.info('Example extra graph feature: %s' % fp_extra[0])
+        logger.info('Normalizing extra features...')
+        scaler = preprocessing.Scaler()
+        scaler.fit(fp_extra)
+        scaler.save(opt.output + '/scale.txt')
+        fp_extra = scaler.transform(fp_extra)
 
     logger.info('Selecting data...')
     selector = preprocessing.Selector(smiles_list)
@@ -74,42 +78,39 @@ def main():
 
     device = torch.device('cuda:0')
     # batched data for training set
-    data_list = [[data[i] for i in np.where(selector.train_index)[0]] for data in (
-        graph_list, y_array, feats_node_list, feats_b_list, feats_a_list, feats_d_list,
-        fp_array, name_array, smiles_list)]
-    n_batch, (graphs_batch, y_batch, feats_node_batch, feats_b_batch, feats_a_batch, feats_d_batch,
-              feats_extra_batch, names_batch) = \
-        preprocessing.separate_batches(data_list[:-1], opt.batch, data_list[-1])
+    data_list = [[data[i] for i in np.where(selector.train_index)[0]] for data in
+                 [graph_list, y_array, feats_node_list] + list(feats_edges_list.values()) +
+                 [fp_extra, name_array, smiles_list]
+                 ]
+    n_batch, data_list_batched = preprocessing.separate_batches(data_list[:-1], opt.batch, data_list[-1])
+    graphs_batch, y_batch, feats_node_batch = data_list_batched[:3]
+    feats_edges_batch = data_list_batched[3:-2]
+    feats_extra_batch, names_batch = data_list_batched[-2:]
     bg_batch_train = [dgl.batch(graphs).to(device) for graphs in graphs_batch]
     y_batch_train = [torch.tensor(y, dtype=torch.float32, device=device) for y in y_batch]
     feats_node_batch_train = [torch.tensor(np.concatenate(feats), dtype=torch.float32, device=device)
                               for feats in feats_node_batch]
-    feats_b_batch_train = [torch.tensor(np.concatenate(feats), dtype=torch.float32, device=device)
-                           for feats in feats_b_batch]
-    feats_a_batch_train = [torch.tensor(np.concatenate(feats), dtype=torch.float32, device=device)
-                           for feats in feats_a_batch]
-    feats_d_batch_train = [torch.tensor(np.concatenate(feats), dtype=torch.float32, device=device)
-                           for feats in feats_d_batch]
-    feats_extra_batch_train = [torch.tensor(feats, dtype=torch.float32, device=device)
-                               for feats in feats_extra_batch]
+    feats_edges_batch_train = []
+    for feats_edges in zip(*feats_edges_batch):
+        _t_edges = (torch.tensor(np.concatenate(feats), dtype=torch.float32, device=device) for feats in feats_edges)
+        feats_edges_batch_train.append(dict(zip(feats_edges_list.keys(), _t_edges)))
+    feats_extra_batch_train = [torch.tensor(feats, dtype=torch.float32, device=device) for feats in feats_extra_batch]
     # for plot
     y_train_array = np.concatenate(y_batch)
     names_train = np.concatenate(names_batch)
 
     # data for validation set
-    graphs, y, feats_node, feats_b, feats_a, feats_d, feats_extra, names_valid = \
-        [[data[i] for i in np.where(selector.valid_index)[0]] for data in
-         (graph_list, y_array, feats_node_list, feats_b_list, feats_a_list, feats_d_list,
-          fp_array, name_array)]
-    bg_valid, y_valid, feats_node_valid, feats_b_valid, feats_a_valid, feats_d_valid, feats_extra_valid = (
-        dgl.batch(graphs).to(device),
-        torch.tensor(y, dtype=torch.float32, device=device),
-        torch.tensor(np.concatenate(feats_node), dtype=torch.float32, device=device),
-        torch.tensor(np.concatenate(feats_b), dtype=torch.float32, device=device),
-        torch.tensor(np.concatenate(feats_a), dtype=torch.float32, device=device),
-        torch.tensor(np.concatenate(feats_d), dtype=torch.float32, device=device),
-        torch.tensor(feats_extra, dtype=torch.float32, device=device),
-    )
+    data_list = [[data[i] for i in np.where(selector.valid_index)[0]] for data in
+                 [graph_list, y_array, feats_node_list] + list(feats_edges_list.values()) + [fp_extra, name_array]
+                 ]
+    graphs, y, feats_node = data_list[:3]
+    feats_edges = data_list[3:-2]
+    feats_extra, names_valid = data_list[-2:]
+    bg_valid = dgl.batch(graphs).to(device)
+    feats_node_valid = torch.tensor(np.concatenate(feats_node), dtype=torch.float32, device=device)
+    _t_edges = (torch.tensor(np.concatenate(feats), dtype=torch.float32, device=device) for feats in feats_edges)
+    feats_edges_valid = dict(zip(feats_edges_list.keys(), _t_edges))
+    feats_extra_valid = torch.tensor(feats_extra, dtype=torch.float32, device=device)
     # for plot
     y_valid_array = y_array[selector.valid_index]
 
@@ -117,12 +118,9 @@ def main():
     logger.info('Batches = %d, Batch size ~= %d' % (n_batch, opt.batch))
 
     in_feats_node = feats_node_list[0].shape[-1]
-    in_feats_bond = feats_b_list[0].shape[-1]
-    in_feats_angle = feats_a_list[0].shape[-1]
-    in_feats_dihedral = feats_d_list[0].shape[-1]
-    in_feats_extra = fp_array[0].shape[-1]
-    model = ForceFieldGATModel(in_feats_node, in_feats_bond, in_feats_angle, in_feats_dihedral, in_feats_extra,
-                               out_dim=opt.embed, n_head=opt.head)
+    in_feats_edges = {edge_type: feats_edge[0].shape[-1] for edge_type, feats_edge in feats_edges_list.items()}
+    in_feats_extra = fp_extra[0].shape[-1]
+    model = ForceFieldGATModel(in_feats_node, in_feats_edges, in_feats_extra, out_dim=opt.embed, n_head=opt.head)
     model.cuda()
     print(model)
     for name, param in model.named_parameters():
@@ -139,8 +137,8 @@ def main():
             pred_train = []
         for ib in range(len(bg_batch_train)):
             optimizer.zero_grad()
-            pred = model(bg_batch_train[ib], feats_node_batch_train[ib], feats_b_batch_train[ib],
-                         feats_a_batch_train[ib], feats_d_batch_train[ib], feats_extra_batch_train[ib])
+            pred = model(bg_batch_train[ib], feats_node_batch_train[ib], feats_edges_batch_train[ib],
+                         feats_extra_batch_train[ib])
             loss = F.mse_loss(pred, y_batch_train[ib])
             loss.backward()
             optimizer.step()
@@ -151,8 +149,7 @@ def main():
         if (epoch + 1) % 100 == 0:
             model.eval()
             pred_train = np.concatenate(pred_train)
-            pred_valid = model(bg_valid, feats_node_valid, feats_b_valid, feats_a_valid, feats_d_valid,
-                               feats_extra_valid).detach().cpu().numpy()
+            pred_valid = model(bg_valid, feats_node_valid, feats_edges_valid, feats_extra_valid).detach().cpu().numpy()
             mse_train = metrics.mean_squared_error(y_train_array, pred_train)
             mse_valid = metrics.mean_squared_error(y_valid_array, pred_valid)
             err_line = '%-8i %8.2e %8.2e %8.1f %8.1f %8.1f %8.1f %8.1f %8.1f' % (

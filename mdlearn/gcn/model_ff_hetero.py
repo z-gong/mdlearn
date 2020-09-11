@@ -50,36 +50,29 @@ class MultiHeadEdgeGATLayer(nn.Module):
 
 
 class FFGATLayer(nn.Module):
-    def __init__(self, in_dim_node, in_dim_bond, in_dim_angle, in_dim_dihedral, out_dim, n_head):
+    def __init__(self, in_dim_node, in_dim_edges, out_dim, n_head):
         super(FFGATLayer, self).__init__()
-        self.gat_bond = MultiHeadEdgeGATLayer(in_dim_node, in_dim_bond, out_dim, n_head)
-        self.gat_angle = MultiHeadEdgeGATLayer(in_dim_node, in_dim_angle, out_dim, n_head)
-        # self.gat_dihedral = MultiHeadEdgeGATLayer(in_dim_node, in_dim_dihedral, out_dim, n_head)
+        self.module_dict = nn.ModuleDict()
+        for edge_type, in_dim_edge in in_dim_edges.items():
+            self.module_dict[edge_type] = MultiHeadEdgeGATLayer(in_dim_node, in_dim_edge, out_dim, n_head)
 
-    def forward(self, g, feats_node, feats_bond, feats_angle, feats_dihedral):
-        hb = self.gat_bond(g, feats_node, feats_bond, 'bond')
-        ha = self.gat_angle(g, feats_node, feats_angle, 'angle')
-        # hd = self.gat_dihedral(g, feats_node, feats_dihedral, 'dihedral')
-        # return torch.cat([hb, ha, hd], dim=1)
-        return torch.cat([hb, ha], dim=1)
+    def forward(self, g, feats_node, feats_edges):
+        out_list = [module(g, feats_node, feats_edges[etype], etype) for etype, module in self.module_dict.items()]
+        return torch.cat(out_list, dim=1)
 
 
 class ForceFieldGATModel(nn.Module):
-    def __init__(self, in_dim_node, in_dim_bond, in_dim_angle, in_dim_dihedral, in_dim_graph, out_dim, n_head):
+    def __init__(self, in_dim_node, in_dim_edges, in_dim_graph, out_dim, n_head):
         super(ForceFieldGATModel, self).__init__()
-        self.gat1 = FFGATLayer(in_dim_node, in_dim_bond, in_dim_angle, in_dim_dihedral, out_dim, n_head)
-        # self.gat2 = FFGATLayer(out_dim * n_head * 3, in_dim_bond, in_dim_angle, in_dim_dihedral, out_dim, n_head)
-        # self.gat3 = FFGATLayer(out_dim * n_head * 3, in_dim_bond, in_dim_angle, in_dim_dihedral, out_dim, 1)
-        # self.readout = WeightedAverage(out_dim * 3)
-        # self.mlp = MLPModel(out_dim * 3 + in_dim_graph, 1, [out_dim * 2, out_dim])
-        self.gat2 = FFGATLayer(out_dim * n_head * 2, in_dim_bond, in_dim_angle, in_dim_dihedral, out_dim, n_head)
-        self.gat3 = FFGATLayer(out_dim * n_head * 2, in_dim_bond, in_dim_angle, in_dim_dihedral, out_dim, 1)
-        self.readout = WeightedAverage(out_dim * 2)
-        self.mlp = MLPModel(out_dim * 2 + in_dim_graph, 1, [out_dim * 2, out_dim])
+        self.gat1 = FFGATLayer(in_dim_node, in_dim_edges, out_dim, n_head)
+        self.gat2 = FFGATLayer(out_dim * n_head * len(in_dim_edges), in_dim_edges, out_dim, n_head)
+        self.gat3 = FFGATLayer(out_dim * n_head * len(in_dim_edges), in_dim_edges, out_dim, 1)
+        self.readout = WeightedAverage(out_dim * len(in_dim_edges))
+        self.mlp = MLPModel(out_dim * len(in_dim_edges) + in_dim_graph, 1, [out_dim * 2, out_dim])
 
-    def forward(self, g, feats_node, feats_bond, feats_angle, feats_dihedral, feats_graph):
-        x = F.selu(self.gat1(g, feats_node, feats_bond, feats_angle, feats_dihedral))
-        x = F.selu(self.gat2(g, x, feats_bond, feats_angle, feats_dihedral))
-        x = F.selu(self.gat3(g, x, feats_bond, feats_angle, feats_dihedral))
+    def forward(self, g, feats_node, feats_edges, feats_graph):
+        x = F.selu(self.gat1(g, feats_node, feats_edges))
+        x = F.selu(self.gat2(g, x, feats_edges))
+        x = F.selu(self.gat3(g, x, feats_edges))
         embedding = self.readout(g, x)
         return self.mlp(torch.cat([embedding, feats_graph], dim=1))
