@@ -100,3 +100,5 @@ class WyzIndexer(Fingerprint):
 
     def index_list(self, smiles_list):
         return [self.index(s) for s in smiles_list]
+
+Fingerprint.register(WyzIndexer)

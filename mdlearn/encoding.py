@@ -3,7 +3,7 @@
 
 import pathlib
 import numpy as np
-from mdlearn.fp import encoders_dict
+from mdlearn.fp import Fingerprint
 
 
 class FPEncoder:
@@ -14,9 +14,10 @@ class FPEncoder:
         """ indexer_class: A class that has function index(object) ==> numpy array
         """
 
-        self.Indexers = [encoders_dict.get(encoder) for encoder in encoders]
-        if None in self.Indexers:
-            raise Exception('Available encoders: %s' % encoders_dict.keys())
+        try:
+            self.Indexers = [Fingerprint.get_encoder(name) for name in encoders]
+        except:
+            raise Exception('Available encoders: %s' % Fingerprint.get_encoder_names())
 
         self.fp_name = fp_name
         self.save_svg = save_svg

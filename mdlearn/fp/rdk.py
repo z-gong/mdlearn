@@ -26,6 +26,8 @@ class ECFP4Indexer(Fingerprint):
     def index_list(self, smiles_list):
         return [self.index(s) for s in smiles_list]
 
+Fingerprint.register(ECFP4Indexer)
+
 
 class MorganCountIndexer(Fingerprint):
     name = 'morgan'
@@ -100,6 +102,8 @@ class MorganCountIndexer(Fingerprint):
 
         return bits_list
 
+Fingerprint.register(MorganCountIndexer)
+
 
 class Morgan1CountIndexer(MorganCountIndexer):
     name = 'morgan1'
@@ -107,6 +111,8 @@ class Morgan1CountIndexer(MorganCountIndexer):
     def __init__(self):
         super().__init__()
         self.radius = 1
+
+Fingerprint.register(Morgan1CountIndexer)
 
 
 class PredefinedMorganCountIndexer(Fingerprint):
@@ -126,6 +132,8 @@ class PredefinedMorganCountIndexer(Fingerprint):
     def index_list(self, smiles_list):
         return [self.index(s) for s in smiles_list]
 
+Fingerprint.register(PredefinedMorganCountIndexer)
+
 
 class PredefinedMorgan1CountIndexer(PredefinedMorganCountIndexer):
     name = 'predefinedmorgan1'
@@ -134,3 +142,5 @@ class PredefinedMorgan1CountIndexer(PredefinedMorganCountIndexer):
         super().__init__()
         self.radius = 1
         self.use_pre_idx_list = 'morgan1'
+
+Fingerprint.register(PredefinedMorgan1CountIndexer)

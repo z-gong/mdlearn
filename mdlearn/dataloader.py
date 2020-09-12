@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 
-def load(filename, target, fps: []):
+def load(filename, target, fps: [], log10P=False):
     """ Load data from file with different temperature and pressure;
         target: 'density'/'einter'/'compress'/'expansion'/'cp'/'hvap'/'st'/'tc'/'dc'
     """
@@ -13,7 +13,10 @@ def load(filename, target, fps: []):
     if 'T' in df.columns:
         other_lists.append(df['T'].values)
     if 'P' in df.columns:
-        other_lists.append(df['P'].values)
+        p = df['P'].values
+        if log10P:
+            p = np.log10(p)
+        other_lists.append(p)
 
     fp_dict = {}
     for fp_file in fps:
