@@ -3,7 +3,6 @@ import argparse
 import logging
 import base64
 import numpy as np
-import sklearn as sk
 import torch
 import torch.nn.functional as F
 import dgl
@@ -26,6 +25,8 @@ parser.add_argument('--epoch', default=1600, type=int, help='Number of epochs')
 parser.add_argument('--lr', default=0.01, type=float, help='Initial learning rate')
 parser.add_argument('--lrsteps', default=400, type=int, help='Scale learning rate every these steps')
 parser.add_argument('--lrgamma', default=0.2, type=float, help='Scaling factor for learning rate')
+parser.add_argument('--l2', default=0.000, type=float, help='L2 Penalty')
+parser.add_argument('--check', default=100, type=int, help='Number of epoch that do convergence check')
 parser.add_argument('--batch', default=1000, type=int, help='Approximate batch size')
 
 opt = parser.parse_args()
@@ -47,7 +48,7 @@ logger.addHandler(flog)
 def main():
     logger.info('Reading data and extra features...')
     fp_files = [] if opt.fp is None else opt.fp.split(',')
-    fp_array, y_array, name_array = dataloader.load(opt.input, opt.target, fp_files)
+    fp_extra, y_array, name_array = dataloader.load(opt.input, opt.target, fp_files)
     smiles_list = [name.split()[0] for name in name_array]
 
     logger.info('Generating molecular graphs with %s...' % opt.graph)
@@ -58,12 +59,13 @@ def main():
         graph_list, feats_list = msd2dgl(msd_list, '../data/msdfiles.zip')
     else:
         raise
-    logger.info('Example node feature: %s' % feats_list[0][0])
 
-    fp_extra = np.concatenate(([[g.number_of_nodes(), g.number_of_edges()] for g in graph_list], fp_array), axis=1)
+    logger.info('Node feature example: (size=%d) %s' % (len(feats_list[0][0]), ','.join(map(str, feats_list[0][0]))))
+    logger.info('Extra graph feature example: (size=%d) %s' % (len(fp_extra[0]), ','.join(map(str, fp_extra[0]))))
+    logger.info('Output example: (size=%d) %s' % (len(y_array[0]), ','.join(map(str, y_array[0]))))
+
     if fp_extra.shape[-1] > 0:
-        logger.info('Example extra graph feature: %s' % fp_extra[0])
-        logger.info('Normalizing extra features...')
+        logger.info('Normalizing extra graph features...')
         scaler = preprocessing.Scaler()
         scaler.fit(fp_extra)
         scaler.save(opt.output + '/scale.txt')
@@ -122,11 +124,11 @@ def main():
     header = 'Step Loss MeaSquE MeaSigE MeaUnsE MaxRelE Acc2% Acc5% Acc10%'.split()
     logger.info('%-8s %8s %8s %8s %8s %8s %8s %8s %8s' % tuple(header))
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr)
+    optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr, weight_decay=opt.l2)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=opt.lrsteps, gamma=opt.lrgamma)
     for epoch in range(opt.epoch):
         model.train()
-        if (epoch + 1) % 100 == 0:
+        if (epoch + 1) % opt.check == 0:
             pred_train = []
         for ib in range(len(bg_batch_train)):
             optimizer.zero_grad()
@@ -134,11 +136,11 @@ def main():
             loss = F.mse_loss(pred, y_batch_train[ib])
             loss.backward()
             optimizer.step()
-            if (epoch + 1) % 100 == 0:
+            if (epoch + 1) % opt.check == 0:
                 pred_train.append(pred.detach().cpu().numpy())
         scheduler.step()
 
-        if (epoch + 1) % 100 == 0:
+        if (epoch + 1) % opt.check == 0:
             model.eval()
             pred_train = np.concatenate(pred_train)
             pred_valid = model(bg_valid, feats_node_valid, feats_extra_valid).detach().cpu().numpy()
@@ -156,8 +158,8 @@ def main():
             logger.info(err_line)
     torch.save(model, opt.output + '/model.pt')
 
-    visualizer = visualize.LinearVisualizer(y_train_array, pred_train, names_train, 'train')
-    visualizer.append(y_valid_array, pred_valid, names_valid, 'valid')
+    visualizer = visualize.LinearVisualizer(y_train_array.reshape(-1), pred_train.reshape(-1), names_train, 'train')
+    visualizer.append(y_valid_array.reshape(-1), pred_valid.reshape(-1), names_valid, 'valid')
     visualizer.dump(opt.output + '/fit.txt')
     visualizer.dump_bad_molecules(opt.output + '/error-0.10.txt', 'valid', threshold=0.1)
     visualizer.scatter_yy(savefig=opt.output + '/error-train.png', annotate_threshold=0.1, marker='x', lw=0.2, s=5)
