@@ -49,9 +49,16 @@ class GCNModel(nn.Module):
 
 
 class WeightedAverage(nn.Module):
-    def __init__(self, in_feats):
+    def __init__(self, in_feats, out_feats=1):
+        '''
+        Parameters
+        ----------
+        in_feats : int
+        out_feats : int
+            out_feats should be 1 or equal to in_feats
+        '''
         super(WeightedAverage, self).__init__()
-        self.score = nn.Linear(in_feats, 1)
+        self.score = nn.Linear(in_feats, out_feats)
 
         torch.nn.init.normal_(self.score.weight, std=0.5)
         torch.nn.init.zeros_(self.score.bias)
