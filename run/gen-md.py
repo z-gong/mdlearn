@@ -13,13 +13,12 @@ import mstools.ommhelper as oh
 from mstools.utils import histogram
 import matplotlib.pyplot as plt
 import base64
+import math
 import numpy as np
 import pandas as pd
 import mdtraj
-import tempfile
-from zipfile import ZipFile
-import shutil
 import multiprocessing
+from mdlearn.gcn.graph import _read_msd_files
 
 parser = argparse.ArgumentParser(description='Generate fingerprints')
 parser.add_argument('-i', '--input', type=str, nargs='+', required=True, help='Data')
@@ -38,27 +37,8 @@ logger.setLevel(logging.WARNING)
 ff = ForceField.open('../data/dump-MGI.ppf')
 
 
-def read_msd_files(msd_files):
-    tmp_dir = tempfile.mkdtemp()
-    with ZipFile('../data/msdfiles.zip') as zip:
-        zip.extractall(tmp_dir)
-
-    topologies = []
-    top_dict = {}
-    for file in msd_files:
-        if file in top_dict:
-            top = top_dict[file]
-        else:
-            top = Topology.open(os.path.join(tmp_dir, file))
-            top_dict[file] = top
-        topologies.append(top)
-
-    shutil.rmtree(tmp_dir)
-
-    return topologies
-
-
-def run_md(top, T, n_step, name):
+def run_md(mol, T, n_step, name):
+    top = Topology([mol])
     top.assign_charge_from_ff(ff)
     system = System(top, ff, transfer_bonded_terms=True, suppress_pbc_warning=True)
     ommsys = system.to_omm_system()
@@ -74,39 +54,43 @@ def run_md(top, T, n_step, name):
     sim.step(n_step)
 
 
-def analyze(top, T, name):
-    pairs_di = []
-    for i, di in enumerate(top.dihedrals):
-        pairs_di.append([di.atom1.id, di.atom4.id, i])
+def analyze(mol, T, name):
+    id_pairs = []
+    for pairs in mol.get_12_13_14_pairs():
+        for p in pairs:
+            id_pairs.append([p[0].id, p[1].id])
+
+    edges = np.linspace(0, 0.6, 61)  # 0.6 A maximum
+    index = (edges[1:] + edges[:-1]) / 2
+    df = pd.DataFrame(index=index)
 
     trj = mdtraj.load(f'{name}-{T}.gro')
-    distances = mdtraj.compute_distances(trj, np.array(pairs_di)[:, (0, 1)])
+    distances = mdtraj.compute_distances(trj, id_pairs)
     distances = list(zip(*distances))
-    for (_, _, i), distance in zip(pairs_di, distances):
-        x, y = histogram(distance, bins=20)
-        fig = plt.figure()
-        ax = fig.add_subplot(111)
-        ax.plot(x, y)
-        ax.set(title=str(top.dihedrals[i]))
+    for (i, j), distance in zip(id_pairs, distances):
+        x, y = histogram(distance, bins=edges)
+        df['%s-%s' % (mol.atoms[i].name, mol.atoms[j].name)] = y
+
+    return df
 
 
 if __name__ == '__main__':
-    smiles_set = set()
+    smiles_list = []
     for inp in opt.input:
         df = pd.read_csv(inp, sep='\s+', header=0)
-        smiles_set.update(df.SMILES.tolist())
-    smiles_list = list(sorted(smiles_set))
+        for smiles in df.SMILES:
+            if smiles not in smiles_list:
+                smiles_list.append(smiles)
     name_list = [base64.b64encode(smiles.encode()).decode() for smiles in smiles_list]
-    msd_list = [f'{name}.msd' for name in name_list]
-    top_list = read_msd_files(msd_list)
+    mol_list = _read_msd_files([f'{name}.msd' for name in name_list], '../data/msdfiles.zip')
 
-    n_group = math.ceil(len(top_list) / opt.nproc)
+    n_group = math.ceil(len(smiles_list) / opt.nproc)
     for i in range(n_group):
         print(f'Run simulations for group {i}')
         jobs = []
-        for smiles, name, top in list(zip(smiles_list, name_list, top_list))[i * opt.nproc: (i + 1) * opt.nproc]:
-            print(f'Run simulation for {smiles}', [(atom.name, atom.type) for atom in top.atoms])
-            p = multiprocessing.Process(target=run_md, args=(top, opt.temp, opt.nstep, name))
+        for smiles, name, mol in list(zip(smiles_list, name_list, mol_list))[i * opt.nproc: (i + 1) * opt.nproc]:
+            print(f'Run simulation for {smiles}', [(atom.name, atom.type) for atom in mol.atoms])
+            p = multiprocessing.Process(target=run_md, args=(mol, opt.temp, opt.nstep, name))
             jobs.append(p)
             p.start()
         for job in jobs:
