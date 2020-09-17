@@ -99,15 +99,12 @@ if __name__ == '__main__':
     name_list = [base64.b64encode(smiles.encode()).decode() for smiles in smiles_list]
     msd_list = [f'{name}.msd' for name in name_list]
     top_list = read_msd_files(msd_list)
-    n_job = len(top_list)
-    n_parallel = 4
 
-    for i in range(math.ceil(n_job / n_parallel)):
-        if i == 1:
-            break
+    n_group = math.ceil(len(top_list) / opt.nproc)
+    for i in range(n_group):
         print(f'Run simulations for group {i}')
         jobs = []
-        for smiles, name, top in list(zip(smiles_list, name_list, top_list))[i * n_parallel: (i + 1) * n_parallel]:
+        for smiles, name, top in list(zip(smiles_list, name_list, top_list))[i * opt.nproc: (i + 1) * opt.nproc]:
             print(f'Run simulation for {smiles}', [(atom.name, atom.type) for atom in top.atoms])
             p = multiprocessing.Process(target=run_md, args=(top, opt.temp, opt.nstep, name))
             jobs.append(p)
