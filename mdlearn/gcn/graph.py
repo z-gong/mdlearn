@@ -6,9 +6,10 @@ from zipfile import ZipFile
 import os
 import tempfile
 import shutil
+import pandas as pd
 
 try:
-    from mstools.topology import Topology, UnitCell
+    from mstools.topology import Topology, UnitCell, Molecule
     from mstools.forcefield import ForceField
     from mstools.simsys import System
 except:
@@ -27,7 +28,6 @@ def _read_msd_files(msd_files, parent_dir):
         with ZipFile(parent_dir) as zip:
             zip.extractall(tmp_dir)
 
-    types = set()
     mol_list = []
     mol_dict = {}  # cache molecules read from MSD files
     for file in msd_files:
@@ -35,16 +35,13 @@ def _read_msd_files(msd_files, parent_dir):
             mol = mol_dict[file]
         else:
             mol = Topology.open(os.path.join(tmp_dir or parent_dir, file)).molecules[0]
-            for atom in mol.atoms:
-                types.add(atom.type)
             mol_dict[file] = mol
         mol_list.append(mol)
-    types = list(sorted(types))
 
     if tmp_dir is not None:
         shutil.rmtree(tmp_dir)
 
-    return mol_list, types
+    return mol_list
 
 
 def msd2dgl(msd_files, parent_dir):
@@ -64,7 +61,13 @@ def msd2dgl(msd_files, parent_dir):
     feats_list : list of np.ndarray of shape (n_atom, n_feat)
 
     '''
-    mol_list, types = _read_msd_files(msd_files, parent_dir)
+    mol_list = _read_msd_files(msd_files, parent_dir)
+
+    types = set()
+    for mol in mol_list:
+        for atom in mol.atoms:
+            types.add(atom.type)
+    types = list(sorted(types))
 
     graph_list = []
     feats_list = []
@@ -86,9 +89,32 @@ def msd2dgl(msd_files, parent_dir):
     return graph_list, feats_list
 
 
-def msd2dgl_ff(msd_files, parent_dir, ff_file):
-    mol_list, types = _read_msd_files(msd_files, parent_dir)
-    top = Topology(mol_list, cell=UnitCell([3, 3, 3]))
+def _read_dist_files(dist_files, parent_dir):
+    tmp_dir = None
+    if parent_dir.endswith('.zip'):
+        tmp_dir = tempfile.mkdtemp()
+        with ZipFile(parent_dir) as zip:
+            zip.extractall(tmp_dir)
+
+    dist_list = []
+    dist_dict = {}  # cache molecules read from MSD files
+    for file in dist_files:
+        if file in dist_dict:
+            df = dist_dict[file]
+        else:
+            df = pd.read_csv(os.path.join(tmp_dir or parent_dir, file), header=0, sep='\s+')
+            dist_dict[file] = df
+        dist_list.append(df)
+
+    if tmp_dir is not None:
+        shutil.rmtree(tmp_dir)
+
+    return dist_list
+
+
+def msd2dgl_ff_pairs(msd_files, msd_dir, ff_file, dist_files, dist_dir):
+    mol_list = _read_msd_files(msd_files, msd_dir)
+    top = Topology(mol_list)
     ff = ForceField.open(ff_file)
     top.assign_charge_from_ff(ff)
     system = System(top, ff, transfer_bonded_terms=True)
@@ -96,71 +122,54 @@ def msd2dgl_ff(msd_files, parent_dir, ff_file):
 
     graph_list = []
     feats_node_list = []
-    feats_edge_list = []
+    feats_p12_list = []
+    feats_p13_list = []
+    feats_p14_list = []
 
-    for mol in top.molecules:
-        u = list(range(mol.n_atom))  # self loop
-        v = list(range(mol.n_atom))
+    dist_list = _read_dist_files(dist_files, dist_dir)
+    for mol, df in zip(top.molecules, dist_list):
+        pairs12, pairs13, pairs14 = mol.get_12_13_14_pairs()
 
-        bonds = [(bond.atom1.id_in_mol, bond.atom2.id_in_mol) for bond in mol.bonds]
-        edges = list(zip(*bonds))
-        u += edges[0] + edges[1]  # bidirectional
-        v += edges[1] + edges[0]
-
-        angles = [(angle.atom1.id_in_mol, angle.atom3.id_in_mol) for angle in mol.angles]
-        edges = list(zip(*angles))
-        u += edges[0] + edges[1]  # bidirectional
-        v += edges[1] + edges[0]
-
-        # dihedrals = [(dihedral.atom1.id_in_mol, dihedral.atom4.id_in_mol) for dihedral in mol.dihedrals]
-        # edges = list(zip(*dihedrals))
-        # u += edges[0] + edges[1]  # bidirectional
-        # v += edges[1] + edges[0]
-
-        graph = dgl.graph((u, v))
+        graph_data = {}
+        for etype, pairs in [('pair12', pairs12), ('pair13', pairs13), ('pair14', pairs14)]:
+            u = [p[0].id_in_mol for p in pairs]
+            v = [p[1].id_in_mol for p in pairs]
+            graph_data.update({('atom', etype, 'atom'): (u + v, v + u)})  # bidirectional
+        graph = dgl.heterograph(graph_data)
         graph_list.append(graph)
 
         feats_node = np.zeros((mol.n_atom, 4))
-        feats_edge = np.zeros((mol.n_atom + (mol.n_bond + mol.n_angle) * 2, 5))  # bidirectional
         for i, atom in enumerate(mol.atoms):
             atype = ff.atom_types[atom.type]
             vdw = ff.get_vdw_term(atype, atype)
             feats_node[i] = vdw.sigma, vdw.epsilon, atom.charge, 0
-            feats_edge[i][0] = 1
-
-        for i, bond in enumerate(mol.bonds):
-            term = system.bond_terms[id(bond)]
-            idxes = np.array([1, 2])
-            feats_edge[mol.n_atom + i][idxes] = 1, term.length * 10
-            feats_edge[mol.n_atom + i + mol.n_bond][idxes] = 1, term.length * 10
-
-        for i, angle in enumerate(mol.angles):
-            term = system.angle_terms[id(angle)]
-            idxes = np.array([3, 4])
-            feats_edge[mol.n_atom + 2 * mol.n_bond + i][idxes] = 1, term.theta / 100
-            feats_edge[mol.n_atom + 2 * mol.n_bond + i + mol.n_angle][idxes] = 1, term.theta / 100
-
-        # for i, dihedral in enumerate(mol.dihedrals):
-        #     term = system.dihedral_terms[id(dihedral)]
-        #     k1, k2, k3, k4 = term.get_opls_parameters()
-        #     idxes = np.array([5, 6, 7, 8])
-        #     _shift = mol.n_atom + 2 * mol.n_bond + 2 * mol.n_angle
-        #     feats_edge[_shift + i][idxes] = 1, k1 / 10, k2 / 10, k3 / 10
-        #     feats_edge[_shift + i + mol.n_dihedral][idxes] = 1, k1 / 10, k2 / 10, k3 / 10
-
         for i, improper in enumerate(mol.impropers):
             term = system.improper_terms[id(improper)]
             feats_node[improper.atom1.id_in_mol][-1] = term.k / 10
-
         feats_node_list.append(feats_node)
-        feats_edge_list.append(feats_edge)
 
-    return graph_list, feats_node_list, feats_edge_list
+        feats_p12 = np.zeros((len(pairs12) * 2, 2))  # bidirectional
+        feats_p13 = np.zeros((len(pairs13) * 2, 2))  # bidirectional
+        feats_p14 = np.zeros((len(pairs14) * 2, 2))  # bidirectional
+        for feats, pairs in [(feats_p12, pairs12), (feats_p13, pairs13), (feats_p14, pairs14)]:
+            for i, pair in enumerate(pairs):
+                key = '%s-%s' % (pair[0].name, pair[1].name)
+                series = df[key]
+                mean, stdev = series.mean(), series.std()
+                feats[i] = feats[i + len(pairs)] = mean, stdev
+        feats_p13_list.append(feats_p12)
+        feats_p14_list.append(feats_p13)
+        feats_p12_list.append(feats_p14)
+
+    return graph_list, feats_node_list, {'pair12': feats_p13_list,
+                                         'pair13': feats_p14_list,
+                                         'pair14': feats_p12_list
+                                         }
 
 
-def msd2dgl_ff_hetero(msd_files, parent_dir, ff_file):
-    mol_list, types = _read_msd_files(msd_files, parent_dir)
-    top = Topology(mol_list, cell=UnitCell([3, 3, 3]))
+def msd2dgl_ff(msd_files, parent_dir, ff_file):
+    mol_list = _read_msd_files(msd_files, parent_dir)
+    top = Topology(mol_list)
     ff = ForceField.open(ff_file)
     top.assign_charge_from_ff(ff)
     system = System(top, ff, transfer_bonded_terms=True)
@@ -174,7 +183,7 @@ def msd2dgl_ff_hetero(msd_files, parent_dir, ff_file):
 
     for mol in top.molecules:
         feats_node = np.zeros((mol.n_atom, 4))
-        feats_bond = np.zeros((mol.n_bond * 2, 3))  # bidirectional
+        feats_bond = np.zeros((mol.n_bond * 2, 2))  # bidirectional
         feats_angle = np.zeros((mol.n_angle * 2, 2))  # bidirectional
         feats_dihedral = np.zeros((mol.n_dihedral * 2, 3))  # bidirectional
         for i, atom in enumerate(mol.atoms):
@@ -184,11 +193,13 @@ def msd2dgl_ff_hetero(msd_files, parent_dir, ff_file):
 
         for i, bond in enumerate(mol.bonds):
             term = system.bond_terms[id(bond)]
-            feats_bond[i] = feats_bond[i + mol.n_bond] = term.length * 10, term.fixed, term.k / 1e5
+            inv_k = 1e5 / term.k if not term.fixed else 0
+            feats_bond[i] = feats_bond[i + mol.n_bond] = term.length * 10, inv_k
 
         for i, angle in enumerate(mol.angles):
             term = system.angle_terms[id(angle)]
-            feats_angle[i] = feats_angle[i + mol.n_angle] = term.theta / 100, term.k / 100
+            inv_k = 100 / term.k if not term.fixed else 0
+            feats_angle[i] = feats_angle[i + mol.n_angle] = term.theta / 100, inv_k
 
         for i, dihedral in enumerate(mol.dihedrals):
             term = system.dihedral_terms[id(dihedral)]
@@ -216,18 +227,18 @@ def msd2dgl_ff_hetero(msd_files, parent_dir, ff_file):
         v = torch.tensor(edges[1] + edges[0])
         graph_data.update({('atom', 'angle', 'atom'): (u, v)})
 
-        # dihedrals = [(dihedral.atom1.id_in_mol, dihedral.atom4.id_in_mol) for dihedral in mol.dihedrals]
-        # edges = list(zip(*dihedrals))
-        # u = torch.tensor(edges[0] + edges[1])  # bidirectional
-        # v = torch.tensor(edges[1] + edges[0])
-        # graph_data.update({('atom', 'dihedral', 'atom'): (u, v)})
+        dihedrals = [(dihedral.atom1.id_in_mol, dihedral.atom4.id_in_mol) for dihedral in mol.dihedrals]
+        edges = list(zip(*dihedrals))
+        u = torch.tensor(edges[0] + edges[1])  # bidirectional
+        v = torch.tensor(edges[1] + edges[0])
+        graph_data.update({('atom', 'dihedral', 'atom'): (u, v)})
 
         graph = dgl.heterograph(graph_data)
         graph_list.append(graph)
 
     return graph_list, feats_node_list, {'bond'    : feats_bond_list,
                                          'angle'   : feats_angle_list,
-                                         # 'dihedral': feats_dihedral_list
+                                         'dihedral': feats_dihedral_list
                                          }
 
 
