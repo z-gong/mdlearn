@@ -10,7 +10,7 @@ import dgl
 import matplotlib.pyplot as plt
 
 from mdlearn.gcn.graph import smi2dgl, msd2dgl_ff
-from mdlearn.gcn.model_ff import ForceFieldGATModel
+from mdlearn.gcn.model_ff_homo import ForceFieldGATModel
 from mdlearn import preprocessing, metrics, visualize, dataloader
 
 parser = argparse.ArgumentParser()
