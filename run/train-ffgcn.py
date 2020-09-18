@@ -3,13 +3,12 @@ import argparse
 import logging
 import base64
 import numpy as np
-import sklearn as sk
 import torch
 import torch.nn.functional as F
 import dgl
 import matplotlib.pyplot as plt
 
-from mdlearn.gcn.graph import msd2dgl_ff
+from mdlearn.gcn.graph import msd2dgl_ff, msd2dgl_ff_pairs
 from mdlearn.gcn.model_ff import ForceFieldGATModel
 from mdlearn import preprocessing, metrics, visualize, dataloader
 
@@ -52,8 +51,9 @@ def main():
 
     logger.info('Generating molecular graphs with %s...' % opt.graph)
     msd_list = ['%s.msd' % base64.b64encode(smiles.encode()).decode() for smiles in smiles_list]
+    dist_list = ['%s.csv' % base64.b64encode(smiles.encode()).decode() for smiles in smiles_list]
     graph_list, feats_node_list, feats_edges_list = \
-        msd2dgl_ff(msd_list, '../data/msdfiles.zip', '../data/dump-MGI.ppf')
+        msd2dgl_ff_pairs(msd_list, '../data/msdfiles.zip', '../data/dump-MGI.ppf', dist_list, '../data/distfiles.zip')
     logger.info('Example node feature: %s' % feats_node_list[0][0])
     for edge_type, feats_list in feats_edges_list.items():
         logger.info('Example %s feature: %s' % (edge_type, feats_list[0][0]))

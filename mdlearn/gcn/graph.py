@@ -18,7 +18,7 @@ else:
     MSTOOLS_FOUND = True
 
 
-def _read_msd_files(msd_files, parent_dir):
+def read_msd_files(msd_files, parent_dir):
     if not MSTOOLS_FOUND:
         raise ModuleNotFoundError('mstools is required for parsing MSD file')
 
@@ -44,6 +44,29 @@ def _read_msd_files(msd_files, parent_dir):
     return mol_list
 
 
+def read_dist_files(dist_files, parent_dir):
+    tmp_dir = None
+    if parent_dir.endswith('.zip'):
+        tmp_dir = tempfile.mkdtemp()
+        with ZipFile(parent_dir) as zip:
+            zip.extractall(tmp_dir)
+
+    dist_list = []
+    dist_dict = {}  # cache DataFrame
+    for file in dist_files:
+        if file in dist_dict:
+            df = dist_dict[file]
+        else:
+            df = pd.read_csv(os.path.join(tmp_dir or parent_dir, file), header=0, sep='\s+')
+            dist_dict[file] = df
+        dist_list.append(df)
+
+    if tmp_dir is not None:
+        shutil.rmtree(tmp_dir)
+
+    return dist_list
+
+
 def msd2dgl(msd_files, parent_dir):
     '''
     Convert a list of MSD files to a list of DGLGraph and node features.
@@ -61,7 +84,7 @@ def msd2dgl(msd_files, parent_dir):
     feats_list : list of np.ndarray of shape (n_atom, n_feat)
 
     '''
-    mol_list = _read_msd_files(msd_files, parent_dir)
+    mol_list = read_msd_files(msd_files, parent_dir)
 
     types = set()
     for mol in mol_list:
@@ -89,31 +112,8 @@ def msd2dgl(msd_files, parent_dir):
     return graph_list, feats_list
 
 
-def _read_dist_files(dist_files, parent_dir):
-    tmp_dir = None
-    if parent_dir.endswith('.zip'):
-        tmp_dir = tempfile.mkdtemp()
-        with ZipFile(parent_dir) as zip:
-            zip.extractall(tmp_dir)
-
-    dist_list = []
-    dist_dict = {}  # cache molecules read from MSD files
-    for file in dist_files:
-        if file in dist_dict:
-            df = dist_dict[file]
-        else:
-            df = pd.read_csv(os.path.join(tmp_dir or parent_dir, file), header=0, sep='\s+')
-            dist_dict[file] = df
-        dist_list.append(df)
-
-    if tmp_dir is not None:
-        shutil.rmtree(tmp_dir)
-
-    return dist_list
-
-
 def msd2dgl_ff_pairs(msd_files, msd_dir, ff_file, dist_files, dist_dir):
-    mol_list = _read_msd_files(msd_files, msd_dir)
+    mol_list = read_msd_files(msd_files, msd_dir)
     top = Topology(mol_list)
     ff = ForceField.open(ff_file)
     top.assign_charge_from_ff(ff)
@@ -126,7 +126,7 @@ def msd2dgl_ff_pairs(msd_files, msd_dir, ff_file, dist_files, dist_dir):
     feats_p13_list = []
     feats_p14_list = []
 
-    dist_list = _read_dist_files(dist_files, dist_dir)
+    dist_list = read_dist_files(dist_files, dist_dir)
     for mol, df in zip(top.molecules, dist_list):
         pairs12, pairs13, pairs14 = mol.get_12_13_14_pairs()
 
@@ -148,27 +148,26 @@ def msd2dgl_ff_pairs(msd_files, msd_dir, ff_file, dist_files, dist_dir):
             feats_node[improper.atom1.id_in_mol][-1] = term.k / 10
         feats_node_list.append(feats_node)
 
-        feats_p12 = np.zeros((len(pairs12) * 2, 2))  # bidirectional
-        feats_p13 = np.zeros((len(pairs13) * 2, 2))  # bidirectional
-        feats_p14 = np.zeros((len(pairs14) * 2, 2))  # bidirectional
+        length = len(dist_list[0])
+        feats_p12 = np.zeros((len(pairs12) * 2, length))  # bidirectional
+        feats_p13 = np.zeros((len(pairs13) * 2, length))  # bidirectional
+        feats_p14 = np.zeros((len(pairs14) * 2, length))  # bidirectional
         for feats, pairs in [(feats_p12, pairs12), (feats_p13, pairs13), (feats_p14, pairs14)]:
             for i, pair in enumerate(pairs):
                 key = '%s-%s' % (pair[0].name, pair[1].name)
-                series = df[key]
-                mean, stdev = series.mean(), series.std()
-                feats[i] = feats[i + len(pairs)] = mean, stdev
-        feats_p13_list.append(feats_p12)
-        feats_p14_list.append(feats_p13)
-        feats_p12_list.append(feats_p14)
+                feats[i][:] = feats[i + len(pairs)][:] = df[key].values()
+        feats_p12_list.append(feats_p12)
+        feats_p13_list.append(feats_p13)
+        feats_p14_list.append(feats_p14)
 
-    return graph_list, feats_node_list, {'pair12': feats_p13_list,
-                                         'pair13': feats_p14_list,
-                                         'pair14': feats_p12_list
+    return graph_list, feats_node_list, {'pair12': feats_p12_list,
+                                         'pair13': feats_p13_list,
+                                         'pair14': feats_p14_list
                                          }
 
 
 def msd2dgl_ff(msd_files, parent_dir, ff_file):
-    mol_list = _read_msd_files(msd_files, parent_dir)
+    mol_list = read_msd_files(msd_files, parent_dir)
     top = Topology(mol_list)
     ff = ForceField.open(ff_file)
     top.assign_charge_from_ff(ff)
