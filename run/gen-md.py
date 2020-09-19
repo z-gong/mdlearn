@@ -1,6 +1,7 @@
 #!/bin/env python3
 
 import os
+import sys
 import argparse
 import logging
 import simtk.openmm as omm
@@ -17,14 +18,16 @@ import numpy as np
 import pandas as pd
 import mdtraj
 import multiprocessing
-from mdlearn.gcn.graph import read_msd_files
+
+sys.path.append('..')
+from mdlearn.dataloader import read_msd_files
 
 parser = argparse.ArgumentParser(description='Generate fingerprints')
 parser.add_argument('-i', '--input', type=str, nargs='+', required=True, help='Data')
 parser.add_argument('-o', '--output', default='md', help='Output directory')
 parser.add_argument('-t', '--temp', type=int, default=300, help='Temperature')
 parser.add_argument('--nstep', type=int, default=int(5E6), help='MD Steps')
-parser.add_argument('--nproc', type=int, default=40, help='Simulations to run in parallel')
+parser.add_argument('--nproc', type=int, default=8, help='Simulations to run in parallel')
 parser.add_argument('--analyze', action='store_true', help='Perform distribution analysis instead of running MD')
 
 opt = parser.parse_args()
@@ -86,7 +89,6 @@ if __name__ == '__main__':
     mol_list = read_msd_files([f'{name}.msd' for name in name_list], '../data/msdfiles.zip')
 
     n_group = math.ceil(len(smiles_list) / opt.nproc)
-    n_group = 1
     for i in range(n_group):
         print(f'Run tasks for group {i}')
         jobs = []
