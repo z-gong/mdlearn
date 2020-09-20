@@ -64,15 +64,23 @@ class FFGATLayer(nn.Module):
 class ForceFieldGATModel(nn.Module):
     def __init__(self, in_dim_node, in_dim_edges, in_dim_graph, out_dim, n_head):
         super(ForceFieldGATModel, self).__init__()
-        self.gat1 = FFGATLayer(in_dim_node, in_dim_edges, out_dim, n_head)
-        self.gat2 = FFGATLayer(out_dim * n_head * len(in_dim_edges), in_dim_edges, out_dim, n_head)
-        self.gat3 = FFGATLayer(out_dim * n_head * len(in_dim_edges), in_dim_edges, out_dim, 1)
-        self.readout = WeightedAverage(out_dim * len(in_dim_edges))
-        self.mlp = MLPModel(out_dim * len(in_dim_edges) + in_dim_graph, 1, [out_dim * 2, out_dim])
+        self.project_node = nn.Sequential(nn.Linear(in_dim_node, out_dim),
+                                          nn.SELU())
+        self.gat1 = FFGATLayer(out_dim, in_dim_edges, out_dim, n_head)
+        # self.gat2 = FFGATLayer(out_dim * n_head * len(in_dim_edges), in_dim_edges, out_dim, n_head)
+        # self.gat3 = FFGATLayer(out_dim * n_head * len(in_dim_edges), in_dim_edges, out_dim, 1)
+        self.gru = nn.GRU(out_dim * n_head * len(in_dim_edges), out_dim)
+        self.readout = WeightedAverage(out_dim)
+        self.mlp = MLPModel(out_dim + in_dim_graph, 1, [out_dim * 2, out_dim])
 
     def forward(self, g, feats_node, feats_edges, feats_graph):
-        x = F.selu(self.gat1(g, feats_node, feats_edges))
-        x = F.selu(self.gat2(g, x, feats_edges))
-        x = F.selu(self.gat3(g, x, feats_edges))
+        x = self.project_node(feats_node)  # (V, out_dim)
+        hidden = x.unsqueeze(0)  # (1, V, out_dim)
+        for i in range(3):
+            x = F.selu(self.gat1(g, x, feats_edges))  # (V, out_dim * n_head * n_etype)
+            x, hidden = self.gru(x.unsqueeze(0), hidden)  # (1, V, out_dim)
+            x = x.squeeze(0)  # (V, out_dim)
+        # x = F.selu(self.gat2(g, x, feats_edges))
+        # x = F.selu(self.gat3(g, x, feats_edges))
         embedding = self.readout(g, x)
         return self.mlp(torch.cat([embedding, feats_graph], dim=1))

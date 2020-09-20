@@ -59,12 +59,11 @@ def msd2dgl(msd_files, parent_dir):
     return graph_list, feats_list
 
 
-def msd2dgl_ff_pairs(msd_files, msd_dir, ff_file, dist_files, dist_dir):
-    mol_list = read_msd_files(msd_files, msd_dir)
+def mol2dgl_ff_pairs(mol_list, ff_file, dist_list):
     top = Topology(mol_list)
     ff = ForceField.open(ff_file)
     top.assign_charge_from_ff(ff)
-    system = System(top, ff, transfer_bonded_terms=True)
+    system = System(top, ff, transfer_bonded_terms=True, suppress_pbc_warning=True)
     top, ff = system.topology, system.ff
 
     graph_list = []
@@ -73,16 +72,22 @@ def msd2dgl_ff_pairs(msd_files, msd_dir, ff_file, dist_files, dist_dir):
     feats_p13_list = []
     feats_p14_list = []
 
-    dist_list = read_dist_files(dist_files, dist_dir)
-    for mol, df in zip(top.molecules, dist_list):
+    for i, (mol, df) in enumerate(zip(top.molecules, dist_list)):
+        if i % 1000 == 0:
+            print('Processing molecule %i / %i' % (i, len(dist_list)))
+
         pairs12, pairs13, pairs14 = mol.get_12_13_14_pairs()
 
-        graph_data = {}
-        for etype, pairs in [('pair12', pairs12), ('pair13', pairs13), ('pair14', pairs14)]:
-            u = [p[0].id_in_mol for p in pairs]
-            v = [p[1].id_in_mol for p in pairs]
-            graph_data.update({('atom', etype, 'atom'): (u + v, v + u)})  # bidirectional
-        graph = dgl.heterograph(graph_data)
+        edges = list(zip(*[(p[0].id_in_mol, p[1].id_in_mol) for p in pairs12]))
+        u12, v12 = edges[0] + edges[1], edges[1] + edges[0]
+        edges = list(zip(*[(p[0].id_in_mol, p[1].id_in_mol) for p in pairs13]))
+        u13, v13 = edges[0] + edges[1], edges[1] + edges[0]
+        edges = list(zip(*[(p[0].id_in_mol, p[1].id_in_mol) for p in pairs14]))
+        u14, v14 = edges[0] + edges[1], edges[1] + edges[0]
+        graph = dgl.heterograph({('atom', 'pair12', 'atom'): (u12, v12),
+                                 ('atom', 'pair13', 'atom'): (u13, v13),
+                                 ('atom', 'pair14', 'atom'): (u14, v14),
+                                 })
         graph_list.append(graph)
 
         feats_node = np.zeros((mol.n_atom, 4))
@@ -95,14 +100,20 @@ def msd2dgl_ff_pairs(msd_files, msd_dir, ff_file, dist_files, dist_dir):
             feats_node[improper.atom1.id_in_mol][-1] = term.k / 10
         feats_node_list.append(feats_node)
 
-        length = len(dist_list[0])
+        # length = len(dist_list[0])
+        length = 11
         feats_p12 = np.zeros((len(pairs12) * 2, length))  # bidirectional
         feats_p13 = np.zeros((len(pairs13) * 2, length))  # bidirectional
         feats_p14 = np.zeros((len(pairs14) * 2, length))  # bidirectional
-        for feats, pairs in [(feats_p12, pairs12), (feats_p13, pairs13), (feats_p14, pairs14)]:
-            for i, pair in enumerate(pairs):
-                key = '%s-%s' % (pair[0].name, pair[1].name)
-                feats[i][:] = feats[i + len(pairs)][:] = df[key].values()
+        for i, pair in enumerate(pairs12):
+            key = '%s-%s' % (pair[0].name, pair[1].name)
+            feats_p12[i][:] = feats_p12[i + len(pairs12)][:] = df[key].values[2:13] / 10
+        for i, pair in enumerate(pairs13):
+            key = '%s-%s' % (pair[0].name, pair[1].name)
+            feats_p13[i][:] = feats_p13[i + len(pairs13)][:] = df[key].values[7:18] / 10
+        for i, pair in enumerate(pairs14):
+            key = '%s-%s' % (pair[0].name, pair[1].name)
+            feats_p14[i][:] = feats_p14[i + len(pairs14)][:] = df[key].values[12:23] / 10
         feats_p12_list.append(feats_p12)
         feats_p13_list.append(feats_p13)
         feats_p14_list.append(feats_p14)
@@ -118,7 +129,7 @@ def msd2dgl_ff(msd_files, parent_dir, ff_file):
     top = Topology(mol_list)
     ff = ForceField.open(ff_file)
     top.assign_charge_from_ff(ff)
-    system = System(top, ff, transfer_bonded_terms=True)
+    system = System(top, ff, transfer_bonded_terms=True, suppress_pbc_warning=True)
     top, ff = system.topology, system.ff
 
     graph_list = []

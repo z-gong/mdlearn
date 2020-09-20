@@ -8,7 +8,7 @@ import torch.nn.functional as F
 import dgl
 import matplotlib.pyplot as plt
 
-from mdlearn.gcn.graph import msd2dgl_ff, msd2dgl_ff_pairs
+from mdlearn.gcn.graph import msd2dgl_ff, mol2dgl_ff_pairs
 from mdlearn.gcn.model_ff import ForceFieldGATModel
 from mdlearn import preprocessing, metrics, visualize, dataloader
 
@@ -46,21 +46,29 @@ logger.addHandler(flog)
 def main():
     logger.info('Reading data and extra features...')
     fp_files = [] if opt.fp is None else opt.fp.split(',')
-    fp_array, y_array, name_array = dataloader.load(opt.input, opt.target, fp_files)
+    fp_extra, y_array, name_array = dataloader.load(opt.input, opt.target, fp_files)
     smiles_list = [name.split()[0] for name in name_array]
 
-    logger.info('Generating molecular graphs with %s...' % opt.graph)
-    msd_list = ['%s.msd' % base64.b64encode(smiles.encode()).decode() for smiles in smiles_list]
-    dist_list = ['%s.csv' % base64.b64encode(smiles.encode()).decode() for smiles in smiles_list]
-    graph_list, feats_node_list, feats_edges_list = \
-        msd2dgl_ff_pairs(msd_list, '../data/msdfiles.zip', '../data/dump-MGI.ppf', dist_list, '../data/distfiles.zip')
-    logger.info('Example node feature: %s' % feats_node_list[0][0])
-    for edge_type, feats_list in feats_edges_list.items():
-        logger.info('Example %s feature: %s' % (edge_type, feats_list[0][0]))
+    logger.info('Reading MSD files...')
+    msd_files = ['%s.msd' % base64.b64encode(smiles.encode()).decode() for smiles in smiles_list]
+    mol_list = dataloader.read_msd_files(msd_files, '../data/msdfiles.zip')
 
-    fp_extra = np.concatenate(([[g.number_of_nodes(), g.number_of_edges()] for g in graph_list], fp_array), axis=1)
+    logger.info('Reading pair distribution files...')
+    dist_files = ['%s-300.csv' % base64.b64encode(smiles.encode()).decode() for smiles in smiles_list]
+    dist_list = dataloader.read_dist_files(dist_files, '../data/distfiles.zip')
+
+    logger.info('Generating molecular graphs...')
+    graph_list, feats_node_list, feats_edges_list = mol2dgl_ff_pairs(mol_list, '../data/dump-MGI.ppf', dist_list)
+
+    logger.info('Node feature example: (size=%i) %s' % (
+        len(feats_node_list[0][0]), ','.join(map(str, feats_node_list[0][0]))))
+    for edge_type, feats_list in feats_edges_list.items():
+        logger.info('Edge %s feature example: (size=%i) %s' % (
+            edge_type, len(feats_list[0][0]), ','.join(map(str, feats_list[0][0]))))
+    logger.info('Extra graph feature example: (size=%i) %s' % (len(fp_extra[0]), ','.join(map(str, fp_extra[0]))))
+    logger.info('Output example: (size=%d) %s' % (len(y_array[0]), ','.join(map(str, y_array[0]))))
+
     if fp_extra.shape[-1] > 0:
-        logger.info('Example extra graph feature: %s' % fp_extra[0])
         logger.info('Normalizing extra features...')
         scaler = preprocessing.Scaler()
         scaler.fit(fp_extra)
