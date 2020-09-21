@@ -64,23 +64,42 @@ class FFGATLayer(nn.Module):
 class ForceFieldGATModel(nn.Module):
     def __init__(self, in_dim_node, in_dim_edges, in_dim_graph, out_dim, n_head):
         super(ForceFieldGATModel, self).__init__()
+        n_edge_type = len(in_dim_edges)
+        self.gat1 = FFGATLayer(in_dim_node, in_dim_edges, out_dim, n_head)
+        self.gat2 = FFGATLayer(out_dim * n_head * n_edge_type, in_dim_edges, out_dim, n_head)
+        self.gat3 = FFGATLayer(out_dim * n_head * n_edge_type, in_dim_edges, out_dim, 1)
+        self.readout = WeightedAverage(out_dim * n_edge_type)
+        self.mlp = MLPModel(out_dim * len(in_dim_edges) + in_dim_graph, 1, [out_dim * 2, out_dim])
+
+    def forward(self, g, feats_node, feats_edges, feats_graph):
+        x = F.selu(self.gat1(g, feats_node, feats_edges))  # (V, out_dim * n_head * n_edge_type)
+        x = F.selu(self.gat2(g, x, feats_edges))  # (V, out_dim * n_head * n_edge_type)
+        x = F.selu(self.gat3(g, x, feats_edges))  # (V, out_dim * n_edge_type)
+        embedding = self.readout(g, x)
+        return self.mlp(torch.cat([embedding, feats_graph], dim=1))
+
+
+class ForceFieldGatedGATModel(nn.Module):
+    def __init__(self, in_dim_node, in_dim_edges, in_dim_graph, out_dim, n_head, n_conv=3):
+        super(ForceFieldGatedGATModel, self).__init__()
         self.project_node = nn.Sequential(nn.Linear(in_dim_node, out_dim),
                                           nn.SELU())
-        self.gat1 = FFGATLayer(out_dim, in_dim_edges, out_dim, n_head)
-        # self.gat2 = FFGATLayer(out_dim * n_head * len(in_dim_edges), in_dim_edges, out_dim, n_head)
-        # self.gat3 = FFGATLayer(out_dim * n_head * len(in_dim_edges), in_dim_edges, out_dim, 1)
+        self.gat_list = nn.ModuleList()
+        for i in range(n_conv):
+            self.gat_list.append(FFGATLayer(out_dim, in_dim_edges, out_dim, n_head))
         self.gru = nn.GRU(out_dim * n_head * len(in_dim_edges), out_dim)
         self.readout = WeightedAverage(out_dim)
         self.mlp = MLPModel(out_dim + in_dim_graph, 1, [out_dim * 2, out_dim])
 
+        nn.init.normal_(self.project_node[0].weight, std=0.5)
+        nn.init.zeros_(self.project_node[0].bias)
+
     def forward(self, g, feats_node, feats_edges, feats_graph):
         x = self.project_node(feats_node)  # (V, out_dim)
         hidden = x.unsqueeze(0)  # (1, V, out_dim)
-        for i in range(3):
-            x = F.selu(self.gat1(g, x, feats_edges))  # (V, out_dim * n_head * n_etype)
+        for gat in self.gat_list:
+            x = F.selu(gat(g, x, feats_edges))  # (V, out_dim * n_head * n_edge_type)
             x, hidden = self.gru(x.unsqueeze(0), hidden)  # (1, V, out_dim)
             x = x.squeeze(0)  # (V, out_dim)
-        # x = F.selu(self.gat2(g, x, feats_edges))
-        # x = F.selu(self.gat3(g, x, feats_edges))
         embedding = self.readout(g, x)
         return self.mlp(torch.cat([embedding, feats_graph], dim=1))

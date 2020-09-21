@@ -3,6 +3,7 @@ import argparse
 import logging
 import base64
 import numpy as np
+import pickle
 import torch
 import torch.nn.functional as F
 import dgl
@@ -49,16 +50,26 @@ def main():
     fp_extra, y_array, name_array = dataloader.load(opt.input, opt.target, fp_files)
     smiles_list = [name.split()[0] for name in name_array]
 
-    logger.info('Reading MSD files...')
-    msd_files = ['%s.msd' % base64.b64encode(smiles.encode()).decode() for smiles in smiles_list]
-    mol_list = dataloader.read_msd_files(msd_files, '../data/msdfiles.zip')
+    _pickle_file = opt.output + '/graph.pickle'
+    if os.path.exists(_pickle_file):
+        logger.info('Unpickling graph and features...')
+        with open(_pickle_file, 'rb') as f:
+            graph_list, feats_node_list, feats_edges_list = pickle.load(f)
+    else:
+        logger.info('Reading MSD files...')
+        msd_files = ['%s.msd' % base64.b64encode(smiles.encode()).decode() for smiles in smiles_list]
+        mol_list = dataloader.read_msd_files(msd_files, '../data/msdfiles.zip')
 
-    logger.info('Reading pair distribution files...')
-    dist_files = ['%s-300.csv' % base64.b64encode(smiles.encode()).decode() for smiles in smiles_list]
-    dist_list = dataloader.read_dist_files(dist_files, '../data/distfiles.zip')
+        logger.info('Reading pair distribution files...')
+        dist_files = ['%s-300.csv' % base64.b64encode(smiles.encode()).decode() for smiles in smiles_list]
+        dist_list = dataloader.read_dist_files(dist_files, '../data/distfiles.zip')
 
-    logger.info('Generating molecular graphs...')
-    graph_list, feats_node_list, feats_edges_list = mol2dgl_ff_pairs(mol_list, '../data/dump-MGI.ppf', dist_list)
+        logger.info('Generating molecular graphs...')
+        graph_list, feats_node_list, feats_edges_list = mol2dgl_ff_pairs(mol_list, '../data/dump-MGI.ppf', dist_list)
+
+        logger.info('Pickling graph and features...')
+        with open(_pickle_file, 'wb') as f:
+            pickle.dump([graph_list, feats_node_list, feats_edges_list], f)
 
     logger.info('Node feature example: (size=%i) %s' % (
         len(feats_node_list[0][0]), ','.join(map(str, feats_node_list[0][0]))))

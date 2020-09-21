@@ -59,7 +59,7 @@ def msd2dgl(msd_files, parent_dir):
     return graph_list, feats_list
 
 
-def mol2dgl_ff_pairs(mol_list, ff_file, dist_list):
+def mol2dgl_ff_pairs(mol_list, ff_file, dist_list, distinguish_pairs=False):
     top = Topology(mol_list)
     ff = ForceField.open(ff_file)
     top.assign_charge_from_ff(ff)
@@ -71,6 +71,7 @@ def mol2dgl_ff_pairs(mol_list, ff_file, dist_list):
     feats_p12_list = []
     feats_p13_list = []
     feats_p14_list = []
+    feats_edge_length = len(dist_list[0])
 
     for i, (mol, df) in enumerate(zip(top.molecules, dist_list)):
         if i % 1000 == 0:
@@ -84,10 +85,16 @@ def mol2dgl_ff_pairs(mol_list, ff_file, dist_list):
         u13, v13 = edges[0] + edges[1], edges[1] + edges[0]
         edges = list(zip(*[(p[0].id_in_mol, p[1].id_in_mol) for p in pairs14]))
         u14, v14 = edges[0] + edges[1], edges[1] + edges[0]
-        graph = dgl.heterograph({('atom', 'pair12', 'atom'): (u12, v12),
-                                 ('atom', 'pair13', 'atom'): (u13, v13),
-                                 ('atom', 'pair14', 'atom'): (u14, v14),
-                                 })
+
+        if distinguish_pairs:
+            graph = dgl.heterograph({('atom', 'pair12', 'atom'): (u12, v12),
+                                     ('atom', 'pair13', 'atom'): (u13, v13),
+                                     ('atom', 'pair14', 'atom'): (u14, v14),
+                                     })
+        else:
+            uv_self = tuple(range(mol.n_atom))
+            graph = dgl.heterograph({('atom', 'pair', 'atom'): (u12 + u13 + u14 + uv_self, v12 + v13 + v14 + uv_self)})
+
         graph_list.append(graph)
 
         feats_node = np.zeros((mol.n_atom, 4))
@@ -100,28 +107,33 @@ def mol2dgl_ff_pairs(mol_list, ff_file, dist_list):
             feats_node[improper.atom1.id_in_mol][-1] = term.k / 10
         feats_node_list.append(feats_node)
 
-        # length = len(dist_list[0])
-        length = 11
-        feats_p12 = np.zeros((len(pairs12) * 2, length))  # bidirectional
-        feats_p13 = np.zeros((len(pairs13) * 2, length))  # bidirectional
-        feats_p14 = np.zeros((len(pairs14) * 2, length))  # bidirectional
+        feats_p12 = np.zeros((len(pairs12) * 2, feats_edge_length))  # bidirectional
+        feats_p13 = np.zeros((len(pairs13) * 2, feats_edge_length))  # bidirectional
+        feats_p14 = np.zeros((len(pairs14) * 2, feats_edge_length))  # bidirectional
         for i, pair in enumerate(pairs12):
             key = '%s-%s' % (pair[0].name, pair[1].name)
-            feats_p12[i][:] = feats_p12[i + len(pairs12)][:] = df[key].values[2:13] / 10
+            feats_p12[i][:] = feats_p12[i + len(pairs12)][:] = df[key].values / 10
         for i, pair in enumerate(pairs13):
             key = '%s-%s' % (pair[0].name, pair[1].name)
-            feats_p13[i][:] = feats_p13[i + len(pairs13)][:] = df[key].values[7:18] / 10
+            feats_p13[i][:] = feats_p13[i + len(pairs13)][:] = df[key].values / 10
         for i, pair in enumerate(pairs14):
             key = '%s-%s' % (pair[0].name, pair[1].name)
-            feats_p14[i][:] = feats_p14[i + len(pairs14)][:] = df[key].values[12:23] / 10
+            feats_p14[i][:] = feats_p14[i + len(pairs14)][:] = df[key].values / 10
         feats_p12_list.append(feats_p12)
         feats_p13_list.append(feats_p13)
         feats_p14_list.append(feats_p14)
 
-    return graph_list, feats_node_list, {'pair12': feats_p12_list,
-                                         'pair13': feats_p13_list,
-                                         'pair14': feats_p14_list
-                                         }
+    if distinguish_pairs:
+        feats_edges = {'pair12': [feats[:, 2:13] for feats in feats_p12_list],
+                       'pair13': [feats[:, 7:18] for feats in feats_p13_list],
+                       'pair14': [feats[:, 12:23] for feats in feats_p14_list],
+                       }
+    else:
+        feats_self_list = [np.zeros((mol.n_atom, feats_edge_length)) for mol in top.molecules]
+        feats_edges = {'pair': [np.concatenate(x) for x in
+                                zip(feats_p12_list, feats_p13_list, feats_p14_list, feats_self_list)]
+                       }
+    return graph_list, feats_node_list, feats_edges
 
 
 def msd2dgl_ff(msd_files, parent_dir, ff_file):
