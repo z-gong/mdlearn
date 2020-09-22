@@ -3,50 +3,46 @@ import torch.nn as nn
 import torch.nn.functional as F
 import dgl
 import dgl.nn.pytorch as dglnn
+import dgl.function as fn
 from .model import WeightedAverage, MLPModel
 
 
 class EdgeGATLayer(nn.Module):
-    def __init__(self, in_dim_node, in_dim_edge, out_dim):
-        super(EdgeGATLayer, self).__init__()
-        self.fc_node = nn.Linear(in_dim_node, out_dim, bias=False)
-        self.fc_edge = nn.Linear(in_dim_edge, out_dim, bias=False)
-        self.attn_fc = nn.Linear(3 * out_dim, 1, bias=False)
-
-        for layer in self.fc_node, self.fc_edge, self.attn_fc:
-            nn.init.normal_(layer.weight, std=0.5)
-
-    def edge_attention(self, edges):
-        z3 = torch.cat([edges.src['z'], edges.dst['z'], edges.data['z']], dim=1)
-        a = self.attn_fc(z3)
-        return {'e': F.leaky_relu(a, negative_slope=0.2)}
-
-    def message_func(self, edges):
-        return {'z': edges.src['z'], 'e': edges.data['e']}
-
-    def reduce_func(self, nodes):
-        alpha = F.softmax(nodes.mailbox['e'], dim=1)
-        h = torch.sum(alpha * nodes.mailbox['z'], dim=1)
-        return {'h': h}
-
-    def forward(self, g, feats_node, feats_edge, etype):
-        g.ndata['z'] = self.fc_node(feats_node)
-        g.edges[etype].data['z'] = self.fc_edge(feats_edge)
-        g.apply_edges(self.edge_attention, etype=etype)
-        g.update_all(self.message_func, self.reduce_func, etype=etype)
-        return g.ndata.pop('h')
-
-
-class MultiHeadEdgeGATLayer(nn.Module):
     def __init__(self, in_dim_node, in_dim_edge, out_dim, n_head):
-        super(MultiHeadEdgeGATLayer, self).__init__()
-        self.heads = nn.ModuleList()
-        for i in range(n_head):
-            self.heads.append(EdgeGATLayer(in_dim_node, in_dim_edge, out_dim))
+        super(EdgeGATLayer, self).__init__()
+        self.fc_node = nn.Linear(in_dim_node, out_dim * n_head, bias=False)
+        self.fc_edge = nn.Linear(in_dim_edge, out_dim * n_head, bias=False)
+        self.attn_l = nn.Parameter(torch.FloatTensor(size=(1, n_head, out_dim)))
+        self.attn_r = nn.Parameter(torch.FloatTensor(size=(1, n_head, out_dim)))
+        self.attn_e = nn.Parameter(torch.FloatTensor(size=(1, n_head, out_dim)))
+
+        for layer in self.fc_node, self.fc_edge:
+            nn.init.normal_(layer.weight, std=0.5)
+        nn.init.normal_(self.attn_l, std=0.5)
+        nn.init.normal_(self.attn_r, std=0.5)
+        nn.init.normal_(self.attn_e, std=0.5)
+
+        self._n_head = n_head
+        self._out_dim = out_dim
 
     def forward(self, g, feats_node, feats_edge, etype):
-        heads_out = [gat(g, feats_node, feats_edge, etype) for gat in self.heads]
-        return torch.cat(heads_out, dim=1)
+        graph = g[etype]
+        with graph.local_scope():
+            feat_n = self.fc_node(feats_node).view(-1, self._n_head, self._out_dim)
+            feat_e = self.fc_edge(feats_edge).view(-1, self._n_head, self._out_dim)
+            # compute attention
+            el = (feat_n * self.attn_l).sum(dim=-1, keepdim=True)
+            er = (feat_n * self.attn_r).sum(dim=-1, keepdim=True)
+            ee = (feat_e * self.attn_e).sum(dim=-1, keepdim=True)
+            graph.ndata.update({'ft': feat_n, 'el': el, 'er': er})
+            graph.apply_edges(fn.u_add_v('el', 'er', 'en'))
+            e = F.leaky_relu(graph.edata.pop('en') + ee)
+            # soft max attention
+            graph.edata['a'] = dgl.ops.edge_softmax(graph, e)
+            # message passing
+            graph.update_all(fn.u_mul_e('ft', 'a', 'm'), fn.sum('m', 'ft'))
+
+            return graph.ndata.pop('ft').view(-1, self._n_head * self._out_dim)
 
 
 class FFGATLayer(nn.Module):
@@ -54,7 +50,7 @@ class FFGATLayer(nn.Module):
         super(FFGATLayer, self).__init__()
         self.module_dict = nn.ModuleDict()
         for edge_type, in_dim_edge in in_dim_edges.items():
-            self.module_dict[edge_type] = MultiHeadEdgeGATLayer(in_dim_node, in_dim_edge, out_dim, n_head)
+            self.module_dict[edge_type] = EdgeGATLayer(in_dim_node, in_dim_edge, out_dim, n_head)
 
     def forward(self, g, feats_node, feats_edges):
         out_list = [module(g, feats_node, feats_edges[etype], etype) for etype, module in self.module_dict.items()]
