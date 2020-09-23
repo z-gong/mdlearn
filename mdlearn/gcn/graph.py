@@ -97,14 +97,11 @@ def mol2dgl_ff_pairs(mol_list, ff_file, dist_list, distinguish_pairs=False):
 
         graph_list.append(graph)
 
-        feats_node = np.zeros((mol.n_atom, 4))
+        feats_node = np.zeros((mol.n_atom, 3))
         for i, atom in enumerate(mol.atoms):
             atype = ff.atom_types[atom.type]
             vdw = ff.get_vdw_term(atype, atype)
-            feats_node[i] = vdw.sigma, vdw.epsilon, atom.charge, 0
-        for i, improper in enumerate(mol.impropers):
-            term = system.improper_terms[id(improper)]
-            feats_node[improper.atom1.id_in_mol][-1] = term.k / 10
+            feats_node[i] = vdw.sigma, vdw.epsilon, atom.charge
         feats_node_list.append(feats_node)
 
         feats_p12 = np.zeros((len(pairs12) * 2, feats_edge_length))  # bidirectional
@@ -130,7 +127,7 @@ def mol2dgl_ff_pairs(mol_list, ff_file, dist_list, distinguish_pairs=False):
                        }
     else:
         feats_self_list = [np.zeros((mol.n_atom, feats_edge_length)) for mol in top.molecules]
-        feats_edges = {'pair': [np.concatenate(x) for x in
+        feats_edges = {'pair': [np.concatenate(x)[:, 2:23] for x in
                                 zip(feats_p12_list, feats_p13_list, feats_p14_list, feats_self_list)]
                        }
     return graph_list, feats_node_list, feats_edges
