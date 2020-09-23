@@ -11,13 +11,19 @@ class EdgeGATLayer(nn.Module):
     def __init__(self, in_dim_node, in_dim_edge, out_dim, n_head):
         super(EdgeGATLayer, self).__init__()
         self.fc_node = nn.Linear(in_dim_node, out_dim * n_head, bias=False)
-        self.fc_edge = nn.Linear(in_dim_edge, out_dim * n_head, bias=False)
+        self.fc_edge = nn.Sequential(nn.Linear(in_dim_edge, out_dim),
+                                     nn.SELU(),
+                                     nn.Linear(out_dim, out_dim),
+                                     )
         self.attn_l = nn.Parameter(torch.FloatTensor(size=(1, n_head, out_dim)))
         self.attn_r = nn.Parameter(torch.FloatTensor(size=(1, n_head, out_dim)))
         self.attn_e = nn.Parameter(torch.FloatTensor(size=(1, n_head, out_dim)))
 
-        for layer in self.fc_node, self.fc_edge:
-            nn.init.normal_(layer.weight, std=0.5)
+        nn.init.normal_(self.fc_node.weight, std=0.5)
+        for layer in self.fc_edge:
+            if hasattr(layer, 'weight'):
+                nn.init.normal_(layer.weight, std=0.5)
+                nn.init.zeros_(layer.bias)
         nn.init.normal_(self.attn_l, std=0.5)
         nn.init.normal_(self.attn_r, std=0.5)
         nn.init.normal_(self.attn_e, std=0.5)
@@ -29,14 +35,16 @@ class EdgeGATLayer(nn.Module):
         graph = g[etype]
         with graph.local_scope():
             feat_n = self.fc_node(feats_node).view(-1, self._n_head, self._out_dim)
-            feat_e = self.fc_edge(feats_edge).view(-1, self._n_head, self._out_dim)
+            feat_e = self.fc_edge(feats_edge)  # (E, out_dim)
+            feat_e = feat_e.repeat_interleave(self._n_head, dim=0) \
+                .view(-1, self._n_head, self._out_dim)  # (E, n_head, out_dim)
             # compute attention
             el = (feat_n * self.attn_l).sum(dim=-1, keepdim=True)
             er = (feat_n * self.attn_r).sum(dim=-1, keepdim=True)
             ee = (feat_e * self.attn_e).sum(dim=-1, keepdim=True)
             graph.ndata.update({'ft': feat_n, 'el': el, 'er': er})
             graph.apply_edges(fn.u_add_v('el', 'er', 'en'))
-            e = F.leaky_relu(graph.edata.pop('en') + ee)
+            e = F.leaky_relu(graph.edata.pop('en') + ee, negative_slope=0.2)
             # soft max attention
             graph.edata['a'] = dgl.ops.edge_softmax(graph, e)
             # message passing
