@@ -13,7 +13,6 @@ class EdgeGATLayer(nn.Module):
         self.fc_node = nn.Linear(in_dim_node, out_dim * n_head, bias=False)
         self.fc_edge = nn.Sequential(nn.Linear(in_dim_edge, out_dim),
                                      nn.SELU(),
-                                     nn.Linear(out_dim, out_dim),
                                      )
         self.attn_l = nn.Parameter(torch.FloatTensor(size=(1, n_head, out_dim)))
         self.attn_r = nn.Parameter(torch.FloatTensor(size=(1, n_head, out_dim)))
@@ -35,8 +34,7 @@ class EdgeGATLayer(nn.Module):
         graph = g[etype]
         with graph.local_scope():
             feat_n = self.fc_node(feats_node).view(-1, self._n_head, self._out_dim)
-            feat_e = self.fc_edge(feats_edge)  # (E, out_dim)
-            feat_e = feat_e.repeat_interleave(self._n_head, dim=0) \
+            feat_e = self.fc_edge(feats_edge).repeat_interleave(self._n_head, dim=0) \
                 .view(-1, self._n_head, self._out_dim)  # (E, n_head, out_dim)
             # compute attention
             el = (feat_n * self.attn_l).sum(dim=-1, keepdim=True)

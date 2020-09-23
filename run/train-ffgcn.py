@@ -156,7 +156,7 @@ def main():
         model.train()
         if (epoch + 1) % opt.check == 0:
             pred_train = []
-        for ib in range(len(bg_batch_train)):
+        for ib in np.random.permutation(len(bg_batch_train)):
             optimizer.zero_grad()
             pred = model(bg_batch_train[ib], feats_node_batch_train[ib], feats_edges_batch_train[ib],
                          feats_extra_batch_train[ib])
