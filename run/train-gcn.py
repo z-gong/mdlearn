@@ -121,33 +121,34 @@ def main():
     for name, param in model.named_parameters():
         print(name, param.data.shape)
 
-    header = 'Step Loss MeaSquE MeaSigE MeaUnsE MaxRelE Acc2% Acc5% Acc10%'.split()
-    logger.info('%-8s %8s %8s %8s %8s %8s %8s %8s %8s' % tuple(header))
+    header = 'Step MaxRE(t) Loss MeaSquE MeaSigE MeaUnsE MaxRelE Acc2% Acc5% Acc10%'.split()
+    logger.info('%-8s %8s %8s %8s %8s %8s %8s %8s %8s %8s' % tuple(header))
 
     optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr, weight_decay=opt.l2)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=opt.lrsteps, gamma=opt.lrgamma)
     for epoch in range(opt.epoch):
         model.train()
         if (epoch + 1) % opt.check == 0:
-            pred_train = []
-        for ib in np.random.permutation(len(bg_batch_train)):
+            pred_train = [None] * n_batch
+        for ib in np.random.permutation(n_batch):
             optimizer.zero_grad()
             pred = model(bg_batch_train[ib], feats_node_batch_train[ib], feats_extra_batch_train[ib])
             loss = F.mse_loss(pred, y_batch_train[ib])
             loss.backward()
             optimizer.step()
             if (epoch + 1) % opt.check == 0:
-                pred_train.append(pred.detach().cpu().numpy())
+                pred_train[ib] = pred.detach().cpu().numpy()
         scheduler.step()
 
         if (epoch + 1) % opt.check == 0:
             model.eval()
             pred_train = np.concatenate(pred_train)
             pred_valid = model(bg_valid, feats_node_valid, feats_extra_valid).detach().cpu().numpy()
-            mse_train = metrics.mean_squared_error(y_train_array, pred_train)
-            mse_valid = metrics.mean_squared_error(y_valid_array, pred_valid)
-            err_line = '%-8i %8.2e %8.2e %8.1f %8.1f %8.1f %8.1f %8.1f %8.1f' % (
-                epoch + 1, mse_train, mse_valid,
+            err_line = '%-8i %8.1f %8.2e %8.2e %8.1f %8.1f %8.1f %8.1f %8.1f %8.1f' % (
+                epoch + 1,
+                metrics.max_relative_error(y_train_array, pred_train) * 100,
+                metrics.mean_squared_error(y_train_array, pred_train),
+                metrics.mean_squared_error(y_valid_array, pred_valid),
                 metrics.mean_signed_error(y_valid_array, pred_valid) * 100,
                 metrics.mean_unsigned_error(y_valid_array, pred_valid) * 100,
                 metrics.max_relative_error(y_valid_array, pred_valid) * 100,
