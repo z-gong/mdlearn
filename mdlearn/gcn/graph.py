@@ -62,7 +62,7 @@ def msd2dgl(msd_files, parent_dir):
 def mol2dgl_ff_pairs(mol_list, ff_file, dist_list, distinguish_pairs=False):
     top = Topology(mol_list)
     ff = ForceField.open(ff_file)
-    top.assign_charge_from_ff(ff)
+    top.assign_charge_from_ff(ff, transfer_bci_terms=True)
     system = System(top, ff, transfer_bonded_terms=True, suppress_pbc_warning=True)
     top, ff = system.topology, system.ff
 
@@ -82,9 +82,13 @@ def mol2dgl_ff_pairs(mol_list, ff_file, dist_list, distinguish_pairs=False):
         edges = list(zip(*[(p[0].id_in_mol, p[1].id_in_mol) for p in pairs12]))
         u12, v12 = edges[0] + edges[1], edges[1] + edges[0]
         edges = list(zip(*[(p[0].id_in_mol, p[1].id_in_mol) for p in pairs13]))
-        u13, v13 = edges[0] + edges[1], edges[1] + edges[0]
+        u13, v13 = tuple(), tuple()
+        if len(pairs13) > 0:
+            u13, v13 = edges[0] + edges[1], edges[1] + edges[0]
         edges = list(zip(*[(p[0].id_in_mol, p[1].id_in_mol) for p in pairs14]))
-        u14, v14 = edges[0] + edges[1], edges[1] + edges[0]
+        u14, v14 = tuple(), tuple()
+        if len(pairs14) > 0:
+            u14, v14 = edges[0] + edges[1], edges[1] + edges[0]
 
         if distinguish_pairs:
             graph = dgl.heterograph({('atom', 'pair12', 'atom'): (u12, v12),
