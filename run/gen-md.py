@@ -42,7 +42,7 @@ ff = ForceField.open('../data/dump-MGI.ppf')
 
 def run_md(mol, T, n_step, name):
     top = Topology([mol])
-    top.assign_charge_from_ff(ff)
+    top.assign_charge_from_ff(ff, transfer_bci_terms=True)
     system = System(top, ff, transfer_bonded_terms=True, suppress_pbc_warning=True)
     ommsys = system.to_omm_system()
     ommtop = top.to_omm_topology()
@@ -53,7 +53,7 @@ def run_md(mol, T, n_step, name):
     sim.context.setPositions(top.positions)
     sim.reporters.append(oh.StateDataReporter(f'{opt.output}/{name}-{str(T)}.log', 1000))
     sim.reporters.append(oh.GroReporter(f'{opt.output}/{name}-{str(T)}.gro', 100))
-    sim.minimizeEnergy()
+    sim.minimizeEnergy(maxIterations=200)
     sim.step(n_step)
 
 
@@ -67,7 +67,13 @@ def analyze(mol, T, name):
     index = (edges[1:] + edges[:-1]) / 2
     df = pd.DataFrame(index=index)
 
-    trj = mdtraj.load(f'{opt.output}/{name}-{T}.gro')
+    try:
+        trj = mdtraj.load(f'{opt.output}/{name}-{T}.gro')
+    except Exception as e:
+        smi = base64.b64decode(name.encode()).decode()
+        logger.error(f'Failed reading GRO file: {smi} {name}-{T}.gro')
+        return None
+
     distances = mdtraj.compute_distances(trj, id_pairs)
     distances = list(zip(*distances))
     for (i, j), distance in zip(id_pairs, distances):
