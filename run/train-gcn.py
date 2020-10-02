@@ -163,6 +163,7 @@ def main():
     visualizer.append(y_valid_array.reshape(-1), pred_valid.reshape(-1), names_valid, 'valid')
     visualizer.dump(opt.output + '/fit.txt')
     visualizer.dump_bad_molecules(opt.output + '/error-0.10.txt', 'valid', threshold=0.1)
+    visualizer.dump_bad_molecules(opt.output + '/error-0.20.txt', 'valid', threshold=0.2)
     visualizer.scatter_yy(savefig=opt.output + '/error-train.png', annotate_threshold=0.1, marker='x', lw=0.2, s=5)
     visualizer.hist_error(savefig=opt.output + '/error-hist.png', label='valid', histtype='step', bins=50)
     plt.show()

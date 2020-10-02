@@ -152,8 +152,8 @@ def main():
 
     logger.info('Optimizer = %s' % (optimizer))
 
-    header = 'Step Loss MeaSquE MeaSigE MeaUnsE MaxRelE Acc2% Acc5% Acc10%'.split()
-    logger.info('%-8s %8s %8s %8s %8s %8s %8s %8s %8s' % tuple(header))
+    header = 'Step MaxRE(t) Loss MeaSquE MeaSigE MeaUnsE MaxRelE Acc2% Acc5% Acc10%'.split()
+    logger.info('%-8s %8s %8s %8s %8s %8s %8s %8s %8s %8s' % tuple(header))
 
     mse_history = []
     converge_times = 0
@@ -174,8 +174,9 @@ def main():
                 pred_valid = model.predict_batch(normed_validx)
                 mse = metrics.mean_squared_error(validy_, pred_valid)
                 mse_history.append(mse)
-                err_line = '%-8i %8.2e %8.2e %8.1f %8.1f %8.1f %8.1f %8.1f %8.1f' % (
+                err_line = '%-8i %8.1f %8.2e %8.2e %8.1f %8.1f %8.1f %8.1f %8.1f %8.1f' % (
                     total_epoch,
+                    metrics.max_relative_error(trainy_, pred_train) * 100,
                     metrics.mean_squared_error(trainy_, pred_train),
                     mse,
                     metrics.mean_signed_error(validy_, pred_valid) * 100,

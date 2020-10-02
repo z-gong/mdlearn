@@ -53,8 +53,9 @@ class TorchMLPRegressor():
         self.dataloader = torch.utils.data.DataLoader(self.dataset, batch_size=self.batch_size, shuffle=True)
 
     def fit_epoch(self, x, y):
+        self.regressor.train()
         total_step = max(1, int(len(x) / self.batch_size))  # The last batch may have data more than self.batch_size
-        for i in range(total_step):
+        for i in np.random.permutation(total_step):
             self.optimizer.zero_grad()
             if i == total_step - 1:
                 x_batch = x[self.batch_size * i:]
@@ -67,6 +68,7 @@ class TorchMLPRegressor():
             self.optimizer.step()
 
     def predict(self, x):
+        self.regressor.eval()
         if type(x) == np.ndarray:
             x = torch.Tensor(x)
         if self.is_gpu:
