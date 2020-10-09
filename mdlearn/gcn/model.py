@@ -27,27 +27,6 @@ class MLPModel(nn.Module):
         return self.mlp(feats)
 
 
-class GCNModel(nn.Module):
-    def __init__(self, in_feats, hidden_size, extra_feats):
-        super().__init__()
-        gcn1 = dglnn.GraphConv(in_feats, hidden_size)
-        gcn2 = dglnn.GraphConv(hidden_size, hidden_size)
-        gcn3 = dglnn.GraphConv(hidden_size, hidden_size)
-
-        for layer in gcn1, gcn2, gcn3:
-            torch.nn.init.normal_(layer.weight, std=0.5)
-            torch.nn.init.zeros_(layer.bias)
-
-        self.conv = nn.Sequential(gcn1, nn.SELU(), gcn2, nn.SELU(), gcn3)
-        self.readout = dglnn.AvgPooling()
-        self.mlp = MLPModel(hidden_size + extra_feats, 1, [2 * hidden_size, hidden_size])
-
-    def forward(self, g, feats_node, feats_graph):
-        x = F.selu(self.conv(g, feats_node))
-        embedding = self.readout(g, x)
-        return self.mlp(torch.cat((embedding, feats_graph), dim=1))
-
-
 class WeightedAverage(nn.Module):
     def __init__(self, in_feats, out_feats=1):
         '''
@@ -74,24 +53,31 @@ class WeightedAverage(nn.Module):
 
 
 class GATModel(nn.Module):
-    def __init__(self, in_feats, hidden_size, n_head, extra_feats):
+    def __init__(self, in_feats, hidden_size, n_head_list, extra_feats):
         super().__init__()
-        self.gat1 = dglnn.GATConv(in_feats, hidden_size, n_head)
-        self.gat2 = dglnn.GATConv(n_head * hidden_size, hidden_size, n_head)
-        self.gat3 = dglnn.GATConv(n_head * hidden_size, hidden_size, 1)
+        self.n_conv = len(n_head_list)
 
-        for layer in self.gat1, self.gat2, self.gat3:
+        self.gat_list = nn.ModuleList()
+        for i in range(self.n_conv):
+            n_head = n_head_list[i]
+            if i == 0:
+                layer = dglnn.GATConv(in_feats, hidden_size, n_head)
+            else:
+                n_head_last = n_head_list[i - 1]
+                layer = dglnn.GATConv(n_head_last * hidden_size, hidden_size, n_head)
+
             torch.nn.init.normal_(layer.attn_l, std=0.5)
             torch.nn.init.normal_(layer.attn_r, std=0.5)
             torch.nn.init.normal_(layer.fc.weight, std=0.5)
+            self.gat_list.append(layer)
 
-        self.readout = WeightedAverage(hidden_size)
+        self.readout = WeightedAverage(hidden_size * n_head_list[-1])
 
-        self.mlp = MLPModel(hidden_size + extra_feats, 1, [2 * hidden_size, hidden_size])
+        self.mlp = MLPModel(hidden_size * n_head_list[-1] + extra_feats, 1, [2 * hidden_size, hidden_size])
 
     def forward(self, g, feats_node, feats_graph):
-        x = F.selu(self.gat1(g, feats_node)).view(g.number_of_nodes(), -1)
-        x = F.selu(self.gat2(g, x)).view(g.number_of_nodes(), -1)
-        x = F.selu(self.gat3(g, x)).view(g.number_of_nodes(), -1)
+        x = feats_node
+        for i in range(self.n_conv):
+            x = F.relu(self.gat_list[i](g, x)).view(g.number_of_nodes(), -1)
         embedding = self.readout(g, x)
         return self.mlp(torch.cat((embedding, feats_graph), dim=1))

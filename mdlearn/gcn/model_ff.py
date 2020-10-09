@@ -59,7 +59,7 @@ class FFGATLayer(nn.Module):
 
 
 class ForceFieldGATModel(nn.Module):
-    def __init__(self, in_dim_node, in_dim_edges, in_dim_graph, out_dim, n_head):
+    def __init__(self, in_dim_node, in_dim_edges, in_dim_graph, out_dim, n_head_list):
         super(ForceFieldGATModel, self).__init__()
         n_edge_type = len(in_dim_edges)
         self.fc_edges = nn.ModuleDict()
@@ -70,11 +70,21 @@ class ForceFieldGATModel(nn.Module):
                                                      nn.SELU(),
                                                      )
         _dim_edges = {etype: out_dim for etype in in_dim_edges}
-        self.gat1 = FFGATLayer(in_dim_node, _dim_edges, out_dim, n_head)
-        self.gat2 = FFGATLayer(out_dim * n_head * n_edge_type, _dim_edges, out_dim, 2)
-        self.gat3 = FFGATLayer(out_dim * 2 * n_edge_type, _dim_edges, out_dim, 1)
-        self.readout = WeightedAverage(out_dim * n_edge_type)
-        self.mlp = MLPModel(out_dim * n_edge_type + in_dim_graph, 1, [out_dim * 2, out_dim])
+
+        self.n_conv = len(n_head_list)
+
+        self.gat_list = nn.ModuleList()
+        for i in range(self.n_conv):
+            n_head = n_head_list[i]
+            if i == 0:
+                layer = FFGATLayer(in_dim_node, _dim_edges, out_dim, n_head)
+            else:
+                n_head_last = n_head_list[i - 1]
+                layer = FFGATLayer(out_dim * n_head_last * n_edge_type, _dim_edges, out_dim, n_head)
+            self.gat_list.append(layer)
+
+        self.readout = WeightedAverage(out_dim * n_head_list[-1] * n_edge_type)
+        self.mlp = MLPModel(out_dim * n_head_list[-1] * n_edge_type + in_dim_graph, 1, [out_dim * 2, out_dim])
 
         for layer in self.fc_edges.values():
             if hasattr(layer, 'weight'):
@@ -83,8 +93,8 @@ class ForceFieldGATModel(nn.Module):
 
     def forward(self, g, feats_node, feats_edges, feats_graph):
         feats_e = {etype: module(feats_edges[etype]) for etype, module in self.fc_edges.items()}
-        x = F.relu(self.gat1(g, feats_node, feats_e))  # (V, out_dim * n_head * n_edge_type)
-        x = F.relu(self.gat2(g, x, feats_e))  # (V, out_dim * n_head * n_edge_type)
-        x = F.relu(self.gat3(g, x, feats_e))  # (V, out_dim * n_edge_type)
+        x = feats_node
+        for i in range(self.n_conv):
+            x = F.relu(self.gat_list[i](g, x, feats_e))  # (V, out_dim * n_head * n_edge_type)
         embedding = self.readout(g, x)
         return self.mlp(torch.cat([embedding, feats_graph], dim=1))

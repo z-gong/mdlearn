@@ -9,7 +9,7 @@ import dgl
 import matplotlib.pyplot as plt
 
 from mdlearn.gcn.graph import smi2dgl, msd2dgl
-from mdlearn.gcn.model import GCNModel, GATModel
+from mdlearn.gcn.model import GATModel
 from mdlearn import preprocessing, metrics, visualize, dataloader
 
 parser = argparse.ArgumentParser()
@@ -20,7 +20,7 @@ parser.add_argument('-t', '--target', default='density', type=str, help='Fitting
 parser.add_argument('-p', '--part', type=str, help='Partition cache file')
 parser.add_argument('-g', '--graph', default='msd', type=str, choices=['msd', 'rdk'], help='Graph type')
 parser.add_argument('--embed', default=16, type=int, help='Size of graph embedding')
-parser.add_argument('--head', default=3, type=int, help='Heads of GAT network')
+parser.add_argument('--head', default='2,2,1', type=str, help='Heads of GAT network')
 parser.add_argument('--epoch', default=1600, type=int, help='Number of epochs')
 parser.add_argument('--lr', default=0.01, type=float, help='Initial learning rate')
 parser.add_argument('--lrsteps', default=400, type=int, help='Scale learning rate every these steps')
@@ -114,8 +114,8 @@ def main():
 
     in_feats_node = feats_list[0].shape[-1]
     in_feats_extra = fp_extra[0].shape[-1]
-    # model = GCNModel(in_feats_node, opt.embed, extra_feats=in_feats_extra)
-    model = GATModel(in_feats_node, opt.embed, n_head=opt.head, extra_feats=in_feats_extra)
+    n_heads = list(map(int, opt.head.split(',')))
+    model = GATModel(in_feats_node, opt.embed, n_head_list=n_heads, extra_feats=in_feats_extra)
     model.cuda()
     print(model)
     for name, param in model.named_parameters():

@@ -137,11 +137,10 @@ def mol2dgl_ff_pairs(mol_list, ff_file, dist_list, distinguish_pairs=False):
     return graph_list, feats_node_list, feats_edges
 
 
-def msd2dgl_ff(msd_files, parent_dir, ff_file):
-    mol_list = read_msd_files(msd_files, parent_dir)
+def msd2dgl_ff(mol_list, ff_file):
     top = Topology(mol_list)
     ff = ForceField.open(ff_file)
-    top.assign_charge_from_ff(ff)
+    top.assign_charge_from_ff(ff, transfer_bci_terms=True)
     system = System(top, ff, transfer_bonded_terms=True, suppress_pbc_warning=True)
     top, ff = system.topology, system.ff
 

@@ -21,7 +21,7 @@ parser.add_argument('-t', '--target', default='density', type=str, help='Fitting
 parser.add_argument('-p', '--part', type=str, help='Partition cache file')
 parser.add_argument('-g', '--graph', default='msd', type=str, choices=['msd', 'rdk'], help='Graph type')
 parser.add_argument('--embed', default=16, type=int, help='Size of graph embedding')
-parser.add_argument('--head', default=3, type=int, help='Heads of GAT network')
+parser.add_argument('--head', default='3,2,1', type=str, help='Heads of GAT network')
 parser.add_argument('--epoch', default=1600, type=int, help='Number of epochs')
 parser.add_argument('--lr', default=0.01, type=float, help='Initial learning rate')
 parser.add_argument('--lrsteps', default=400, type=int, help='Scale learning rate every these steps')
@@ -141,7 +141,8 @@ def main():
     in_feats_node = feats_node_list[0].shape[-1]
     in_feats_edges = {edge_type: feats_edge[0].shape[-1] for edge_type, feats_edge in feats_edges_list.items()}
     in_feats_extra = fp_extra[0].shape[-1]
-    model = ForceFieldGATModel(in_feats_node, in_feats_edges, in_feats_extra, out_dim=opt.embed, n_head=opt.head)
+    n_heads = list(map(int, opt.head.split(',')))
+    model = ForceFieldGATModel(in_feats_node, in_feats_edges, in_feats_extra, out_dim=opt.embed, n_head_list=n_heads)
     model.cuda()
     print(model)
     for name, param in model.named_parameters():
