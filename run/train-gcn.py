@@ -18,7 +18,7 @@ parser.add_argument('-f', '--fp', type=str, help='Fingerprints')
 parser.add_argument('-o', '--output', default='out', type=str, help='Output directory')
 parser.add_argument('-t', '--target', default='density', type=str, help='Fitting target')
 parser.add_argument('-p', '--part', type=str, help='Partition cache file')
-parser.add_argument('-g', '--graph', default='msd', type=str, choices=['msd', 'rdk'], help='Graph type')
+parser.add_argument('--graph', default='msd', type=str, choices=['msd', 'rdk'], help='Graph type')
 parser.add_argument('--embed', default=16, type=int, help='Size of graph embedding')
 parser.add_argument('--head', default='2,2,1', type=str, help='Heads of GAT network')
 parser.add_argument('--epoch', default=1600, type=int, help='Number of epochs')
@@ -115,6 +115,12 @@ def main():
     in_feats_node = feats_list[0].shape[-1]
     in_feats_extra = fp_extra[0].shape[-1]
     n_heads = list(map(int, opt.head.split(',')))
+
+    logger.info('Building network...')
+    logger.info('Conv layers = %s' % n_heads)
+    logger.info('Learning rate = %s' % opt.lr)
+    logger.info('L2 penalty = %f' % opt.l2)
+
     model = GATModel(in_feats_node, opt.embed, n_head_list=n_heads, extra_feats=in_feats_extra)
     model.cuda()
     print(model)
