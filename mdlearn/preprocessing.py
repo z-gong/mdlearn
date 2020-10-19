@@ -129,11 +129,14 @@ class Scaler:
             f.write(','.join(map(str, self.scaler_.scale_)) + '\n')
 
     def load(self, filename):
-        self.scaler_.scale_ = 1
         with open(filename, 'r') as f:
             line1 = f.readline().strip('\n')
             line2 = f.readline().strip('\n')
             line3 = f.readline().strip('\n')
+
+            # have to perform fit first so that some invisible attributes get assigned correctly
+            mean_ = np.array(list(map(float, line1.split(','))))
+            self.scaler_.fit(np.random.random((1, len(mean_))))
 
             self.scaler_.mean_ = np.array(list(map(float, line1.split(','))))
             self.scaler_.var_ = np.array(list(map(float, line2.split(','))))

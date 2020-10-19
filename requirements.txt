@@ -1,6 +1,6 @@
 matplotlib
-openbabel
-rdkit
 scikit-learn
 pytorch
-salib
+dgl
+openbabel
+rdkit
