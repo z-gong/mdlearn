@@ -14,3 +14,4 @@
 
 ### Special case
 * `wyz` contains the results for alkanes reported in JCIM 2018.
+* `out-all-npt.tgz` contains the results of FFGCN graph model on cohesive energy
